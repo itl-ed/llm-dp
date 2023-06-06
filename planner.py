@@ -7,34 +7,58 @@ def call_downward_solver(
     problem_file: str, domain_file_path="domain_v5.pddl"
 ) -> list[str]:
     """
-    Call the local Downward planner and return the plan as list of actions.
+    Call the local FF planner and return the plan as list of actions.
     """
     with open("out_problem.pddl", "w") as file:
         file.write(problem_file)
     # run the external command for FF planner
+    # command = [
+    #     "python",
+    #     "downward/fast-downward.py",
+    #     domain_file_path,
+    #     "out_problem.pddl",
+    #     "--evaluator",
+    #     "hff=ff()",
+    #     "--search",
+    #     "lazy_greedy([hff], preferred=[hff])",
+    # ]
+
+    # python downward/fast-downward.py --alias seq-sat-lama-2011 --overall-time-limit 2s domain_v5.pddl out_problem.pddl
+    # TODO - if error 21 - timeout --> try to increase the timeout
     command = [
         "python",
         "downward/fast-downward.py",
+        "--alias",
+        "seq-sat-lama-2011",
+        "--overall-time-limit",
+        "2s",
         domain_file_path,
         "out_problem.pddl",
-        "--evaluator",
-        "hff=ff()",
-        "--search",
-        "lazy_greedy([hff], preferred=[hff])",
     ]
     result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-    if result.returncode != 0:
+    # return code 23 means timeout
+    if result.returncode != 0 and result.returncode != 23:
         print(f"Command failed with return code {result.returncode}")
         print(f"Standard error: {result.stderr.decode()}")
+        raise Exception(f"Plan Fail {result.returncode}: {result.stderr.decode()}")
 
     # read the results from the 'sas_plan' file
     try:
-        with open("sas_plan", "r") as file:
+        # list sas_plan_files (sas_plan.1, sas_plan.2, ...)
+        sas_plan_files = [
+            f for f in os.listdir(".") if os.path.isfile(f) and f.startswith("sas_plan")
+        ]
+        # sort and select the last sas_plan_file
+        sas_plan_files.sort()
+        sas_plan_file = sas_plan_files[-1]
+        with open(sas_plan_file, "r") as file:
             lines = file.readlines()
             content = [line.strip()[1:-1] for line in lines[:-1]]
-        # remove the temporary files
-        os.remove("sas_plan")
+
+        # clean all sas_plan_files
+        for sas_plan_file in sas_plan_files:
+            os.remove(sas_plan_file)
 
         return content
     except FileNotFoundError:

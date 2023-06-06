@@ -18,6 +18,9 @@ logging.basicConfig(
 
 logger = logging.getLogger()
 
+# Set seed for reproducibility
+random.seed(42)
+
 
 class Settings(BaseSettings):
     openai_api_key: str
@@ -64,16 +67,12 @@ Your task is to: cool some egg and put it in garbagecan.
 egg-1
 Your task is to: clean some soapbar and put it in countertop.
 soapbar-1
-Your task is to: heat some potato and put it in fridge.
-potato-1
 Your task is to: put two cellphone in bed.
 cellphone-1, cellphone-2
 Your task is to: examine the cd with the desklamp.
 cd-1, desklamp-1
 Your task is to: put two vase in coffeetable.
 vase-1, vase-2
-Your task is to: put a cool egg in microwave.
-egg-1
 Your task is to: put some toiletpaper on toiletpaperhanger.
 toiletpaper-1
 {task_description}
@@ -99,14 +98,14 @@ def get_task_goal(
     """
     Given a task description, relevant objects/receptacles return the PDDL goal.
     """
-    relevant_objects_str = " - object \n\t\t".join(relevant_objects)
+    relevant_objects_str = " - object \n".join(relevant_objects)
     relevant_receptacle_str = f"{relevant_receptacle} - receptacle"
 
-    prompt = f"""Given a TASK, complete what the PDDL goal should be. The domain.pddl is defined below:
-
-(define (domain alfred)
+    prompt = f"""(define (domain alfred)
 (:requirements :typing)
-(:types receptacle object rtype)
+(:types
+receptacle object rtype
+)
 (:constants
 SinkBasinType - rtype
 MicrowaveType - rtype
@@ -126,44 +125,40 @@ ContainerType - rtype
 (isHot ?o - object) ; true if the object has been heated up
 (isCool ?o - object) ; true if the object has been cooled
 (receptacleType ?r - receptacle ?t - rtype) ; true if the receptacle is of type ?t
-))
+)
+)
 TASK: Your task is to: put a clean plate in microwave.
-GOAL: 
-(define (problem alfred-problem)
-(:domain alfred)
 (:objects
 microwave-1 receptacle
 plate-1 - object
 )
-(:goal (and (inReceptacle plate-1 microwave-1) (isClean plate-1))
-))
+(:goal
+(exists (?t - object)
+(and (inReceptacle ?t microwave-1)
+(isClean ?t)
+)))
 TASK: Your task is to: examine an alarmclock with the desklamp
-GOAL: 
-(define (problem alfred-problem)
-(:domain alfred)
 (:objects
 alarmclock-1 - object
 desklamp-1 - object
 )
-(:goal 
-(examined alarmclock-1 desklamp-1)
-))
+(:goal
+(exists (?t - object ?l - object)
+(and (examined ?t ?l) (holds ?t)
+)))
 TASK: Your task is to: put two cellphone in bed
-GOAL: 
-(define (problem alfred-problem)
-(:domain alfred)
 (:objects
 bed-1 receptacle
 cellphone-1 - object
 cellphone-2 - object
 )
-(:goal 
-(and (inReceptacle cellphone-1 bed-1) (inReceptacle cellphone-2 bed-1))
-))
+(:goal
+(exists (?t1 - object ?t2 - object)
+(and (inReceptacle ?t1 bed-1)
+(inReceptacle ?t2 bed-1)
+(not (= ?t1 ?t2))
+)))
 TASK: {task_description}
-GOAL:
-(define (problem alfred-problem)
-(:domain alfred)
 (:objects
 {relevant_receptacle_str}
 {relevant_objects_str}
@@ -209,11 +204,11 @@ def process_obs(observation: str) -> dict:
     """
     json_dict = {}
     # check if the receptacle is closed
-    closed_receptacle = re.search(r"The (\w+ \d) is closed", observation)
+    closed_receptacle = re.search(r"The (\w+ \d+) is closed", observation)
     if closed_receptacle:
         return json_dict
     # find the receptacle
-    receptacle = re.search(r"(On|In) the (\w+ \d)|You open the (\w+ \d)", observation)
+    receptacle = re.search(r"(On|In) the (\w+ \d+)|You open the (\w+ \d+)", observation)
     if receptacle:
         # get the receptacle from the right group
         receptacle_key = (
@@ -226,7 +221,7 @@ def process_obs(observation: str) -> dict:
         if no_items:
             return json_dict
         # find items in the receptacle
-        items = re.findall(r"a (\w+ \d)", observation)
+        items = re.findall(r"a (\w+ \d+)", observation)
         for item in items:
             json_dict[receptacle_key].append(item.replace(" ", "-"))
     return json_dict
@@ -300,6 +295,10 @@ class LLMDPAgent:
 
         # identify relevant objects and receptacle from task_description for goal
         self.relevant_task_objects = get_relevant_task_objects(task_description)
+        # set of object types (e.g. apple, bread, etc.)
+        self.revevant_task_object_type = set(
+            [o.split("-")[0] for o in self.relevant_task_objects]
+        )
         self.relevant_task_receptacle = get_relevant_task_receptacle(task_description)
 
         # get PDDL objects from scene_observation
@@ -379,10 +378,8 @@ class LLMDPAgent:
         # construct to PDDL problem.pddl
         problem = (
             "(define (problem alf)\n(:domain alfred)\n"
-            + f"{self.get_pddl_objects()}{self.get_pddl_init()}{self.pddl_goal}"
+            + f"{self.get_pddl_objects()}{self.get_pddl_init()}{self.pddl_goal})"
         )
-        with open("out_problem.pddl", "w") as f:
-            f.write(problem)
         return problem
 
     def update_observation(self, observation: str) -> bool:
@@ -443,10 +440,18 @@ class LLMDPAgent:
 
             # update inReceptacle for all objects observed at this receptacle
             # NOTE: we ignore seen objects that are not relevant to the task
+            # We also add objects of the same type as the target object
             for obj in objects:
                 if obj in self.scene_objects:
                     self.scene_objects[obj]["seen"] = True
                     self.scene_objects[obj]["inReceptacle"] = receptacle
+                elif obj.split("-")[0] in self.revevant_task_object_type:
+                    self.scene_objects[obj] = {
+                        "type": "object",
+                        "relevant": True,
+                        "seen": True,
+                        "inReceptacle": receptacle,
+                    }
 
         return scene_changed
 
@@ -524,7 +529,7 @@ if __name__ == "__main__":
 
     NUM_GAMEFILES = len(env.gamefiles)
 
-    MAX_STEPS = 100
+    MAX_STEPS = 50
 
     def llmdp_run(agent):
         last_observation = ""
@@ -567,23 +572,27 @@ if __name__ == "__main__":
         logger.info(name)
         logger.info(scene_observation)
         logger.info(task_description)
+        if (
+            name
+            == "pick_heat_then_place_in_recep-Apple-None-Fridge-12/trial_T20190909_151720_898440"
+        ):
+            for i, (k, v) in enumerate(prefixes.items()):
+                if name.startswith(k):
+                    try:
+                        agent = LLMDPAgent(scene_observation, task_description)
+                        r = llmdp_run(agent)
+                    except Exception as e:
+                        logger.error(f"{str(e)}")
+                        r = 0
 
-        for i, (k, v) in enumerate(prefixes.items()):
-            if name.startswith(k):
-                try:
-                    agent = LLMDPAgent(scene_observation, task_description)
-                except Exception as e:
-                    logger.error(f"Error in initializing agent {str(e)}")
-                    continue
-                r = llmdp_run(agent)
-                rs[i] += r
-                cnts[i] += 1
+                    rs[i] += r
+                    cnts[i] += 1
 
-                out_log = f"# {_ + 1} r: {r} rs: {rs} cnts: {cnts} sum(rs) / sum(cnts): {sum(rs) / sum(cnts)}"
-                logger.info(out_log)
-                break
+                    out_log = f"# {_ + 1} r: {r} rs: {rs} cnts: {cnts} sum(rs) / sum(cnts): {sum(rs) / sum(cnts)}"
+                    logger.info(out_log)
+                    break
 
-        logger.info("------------\n")
+            logger.info("------------\n")
 
     # save results
     with open("llmdp_results.txt", "w") as f:
