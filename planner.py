@@ -4,7 +4,7 @@ import os
 
 
 def call_downward_solver(
-    problem_file: str, domain_file_path="domain_v5.pddl"
+    problem_file: str, domain_file_path="domain_v5.pddl", timeout=2
 ) -> list[str]:
     """
     Call the local FF planner and return the plan as list of actions.
@@ -24,20 +24,23 @@ def call_downward_solver(
     # ]
 
     # python downward/fast-downward.py --alias seq-sat-lama-2011 --overall-time-limit 2s domain_v5.pddl out_problem.pddl
-    # TODO - if error 21 - timeout --> try to increase the timeout
     command = [
         "python",
         "downward/fast-downward.py",
         "--alias",
         "seq-sat-lama-2011",
         "--overall-time-limit",
-        "2s",
+        f"{timeout}s",
         domain_file_path,
         "out_problem.pddl",
     ]
     result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-    # return code 23 means timeout
+    # if error 21 - timeout --> try to increase the timeout
+    if result.returncode == 21 and timeout < 10:
+        print(f"Timeout @ {timeout}s")
+        return call_downward_solver(problem_file, domain_file_path, timeout + 3)
+
     if result.returncode != 0 and result.returncode != 23:
         print(f"Command failed with return code {result.returncode}")
         print(f"Standard error: {result.stderr.decode()}")
