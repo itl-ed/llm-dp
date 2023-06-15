@@ -9,7 +9,6 @@
         SinkBasinType - rtype
         MicrowaveType - rtype
         FridgeType - rtype
-        ContainerType - rtype
     )
 
     (:predicates
@@ -17,7 +16,7 @@
         (inReceptacle ?o - object ?r - receptacle) ; true if object ?o is in receptacle ?r
         (openable ?r - receptacle) ; true if a receptacle is openable
         (opened ?r - receptacle) ; true if a receptacle is opened
-        (usable ?o - object) ; true if an object (eg. light) is usable
+        (isLight ?o - object) ; true if an object is light source
         (checked ?r - receptacle) ; whether the receptacle has been looked inside/visited
         (examined ?o - object ?l - object) ; whether the object has been looked at with light
         (holds ?o - object) ; object ?o is held by robot
@@ -31,9 +30,9 @@
     (:action examineObjectInLight
         :parameters (?o - object ?l - object ?r - receptacle)
         :precondition (and
+            (isLight ?l) ; is light source
             (holds ?o) ; agent holds object
             (atReceptacleLocation ?r) ; agent is at receptacle
-            (usable ?l) ; light source is usable
             (inReceptacle ?l ?r) ; light source is in receptacle
             (or
                 (not (openable ?r)) ; receptacle is not openable
@@ -91,6 +90,7 @@
         :precondition (and
             (atReceptacleLocation ?r) ; agent is at receptacle
             (inReceptacle ?o ?r) ; object is in/on receptacle
+            (not (isLight ?o)) ; object is not light source
             (forall ; agent's hands are empty.
                 (?t - object)
                 (not (holds ?t))
