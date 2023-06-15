@@ -3,13 +3,12 @@ import subprocess
 from typing import Literal
 import logging
 
-from config import config
+from config import LLMDPConfig
 
 
 def call_lakpt_solver(
     problem_file: str,
     logger: logging.Logger,
-    domain_file_path="alfworld_domain.pddl",
     solver: Literal[
         "bfs_f", "dfs_plus", "siw", "siw_plus", "siw-then-bfsf", "ff"
     ] = "bfs_f",
@@ -18,7 +17,7 @@ def call_lakpt_solver(
     """
     Call the docker LAKPT FF planner and return the plan as list of actions.
     """
-    with open("out_problem.pddl", "w") as file:
+    with open(f"{LLMDPConfig.pddl_dir}/out_problem.pddl", "w") as file:
         file.write(problem_file)
 
     # example command:
@@ -31,16 +30,16 @@ def call_lakpt_solver(
         "docker",
         "run",
         "--platform",
-        config.platform,  # specify platform in config (.env)
+        LLMDPConfig.platform,  # specify platform in config (.env)
         "--rm",
         "-v",
-        f"{os.getcwd()}:/data",
+        f"{os.getcwd()}/{LLMDPConfig.pddl_dir}:/data",
         "lapkt/lapkt-public",
         "timeout",
         f"{timeout}s",
         f"./{solver}",
         "--domain",
-        f"/data/{domain_file_path}",
+        f"/data/{LLMDPConfig.pddl_domain_file}",
         "--problem",
         "/data/out_problem.pddl",
         "--output",
@@ -54,10 +53,10 @@ def call_lakpt_solver(
         logger.error("Planner Failure")
         return []
     try:
-        with open("plan.ipc", "r") as file:
+        with open(f"{LLMDPConfig.pddl_dir}/plan.ipc", "r") as file:
             lines = file.readlines()
             content = [line.strip()[1:-1].lower() for line in lines]
-            os.remove("plan.ipc")
+            os.remove(f"{LLMDPConfig.pddl_dir}/plan.ipc")
             return content
     except FileNotFoundError:
-        print("plan.ipc file not found")
+        logger.warning("plan.ipc file not found")

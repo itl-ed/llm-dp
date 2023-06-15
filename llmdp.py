@@ -4,6 +4,7 @@ import pickle
 import random
 import re
 import time
+import logging
 from collections import defaultdict
 
 import openai
@@ -149,6 +150,67 @@ def llm_cache(prompt: str, stop=["\n"]) -> str:
         with open(cache_file, "wb") as f:
             pickle.dump(llm_responses, f)
     return llm_responses[prompt]
+
+
+def llm_find_objects(
+    objects: list[str], receptacles: list[str], logger: logging.Logger
+) -> str:
+    """
+    Uses the new function cabability of LLM to find most likely location of objects
+    """
+
+    cache_file = f"{LLMDPConfig.output_dir}/llm_responses_gpt-3.5-turbo-0613.pickle"
+    llm_responses = {}
+    if os.path.exists(cache_file):
+        with open(cache_file, "rb") as f:
+            llm_responses = pickle.load(f)
+    key = str(objects) + str(receptacles)
+
+    if key not in llm_responses:
+        example_user_input = "Find the following objects: " + ", ".join(objects)
+        try:
+            completion = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo-0613",
+                messages=[{"role": "user", "content": example_user_input}],
+                functions=[
+                    {
+                        "name": "find_object_at_location",
+                        "description": "Pass most likely location where the items can be found",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "location": {
+                                    "type": "string",
+                                    "enum": receptacles,
+                                    "description": "Most likely location",
+                                }
+                            },
+                            "required": ["location"],
+                        },
+                    }
+                ],
+                function_call={"name": "find_object_at_location"},
+                temperature=0.0,
+            )
+        except RateLimitError:
+            time.sleep(10)
+            return llm_find_objects(objects, receptacles)
+
+        reply_content = completion.choices[0].message
+        funcs = reply_content.to_dict()["function_call"]["arguments"]
+
+        llm_responses[key] = json.loads(funcs)["location"]
+        with open(cache_file, "wb") as f:
+            pickle.dump(llm_responses, f)
+
+    if llm_responses[key] not in receptacles:
+        # hallucinated response
+        logger.warning(
+            f"Hallucinated response looking for {str(objects)}: {llm_responses[key]}"
+        )
+        return random.choice(receptacles)
+
+    return llm_responses[key]
 
 
 class LLMDPAgent:
@@ -355,6 +417,12 @@ class LLMDPAgent:
     ) -> str:
         """
         Given a PDDL action, convert it to an Alfworld textworld action.
+        @TODO 2023-06-15 19:29:06,088 [INFO] PDDL GOAL: (:goal (exists (?t1 - object ?t2 - object)
+            (and (inReceptacle ?t1 sofa-1)
+            (inReceptacle ?t2 sofa-1)
+            (not (= ?t1 ?t2))
+            )))
+        2023-06-15 19:29:08,086 [ERROR] Error in taking action cannot access local variable 'out' where it is not associated with a value
         """
         match action_name:
             case "examineobjectinlight":
@@ -369,12 +437,12 @@ class LLMDPAgent:
                 out = f"take {action_args[0]} from {action_args[1]}"
             case "putobject":
                 out = f"put {action_args[0]} in/on {action_args[1]}"
-            case "coolobject":
-                out = f"cool {action_args[0]} with {action_args[1]}"
-            case "heatobject":
-                out = f"heat {action_args[0]} with {action_args[1]}"
             case "cleanobject":
                 out = f"clean {action_args[0]} with {action_args[1]}"
+            case "heatobject":
+                out = f"heat {action_args[0]} with {action_args[1]}"
+            case "coolobject":
+                out = f"cool {action_args[0]} with {action_args[1]}"
         return out.replace("-", " ")
 
     def get_pddl_goal(self) -> str:
@@ -416,8 +484,13 @@ class LLMDPAgent:
             for o, atts in self.scene_objects.items()
             if not atts["seen"] and atts["type"] == "object"
         ]
+
+        likely_receptacle = llm_find_objects(
+            unseen_objects, unseen_receptacles, self.logger
+        )
         for o in unseen_objects:
-            predicates += f"(inReceptacle {o} {random.choice(unseen_receptacles)})\n"
+            # predicates += f"(inReceptacle {o} {random.choice(unseen_receptacles)})\n"
+            predicates += f"(inReceptacle {o} {likely_receptacle})\n"
 
         pddl_init = f"(:init {predicates})\n"
         return pddl_init
