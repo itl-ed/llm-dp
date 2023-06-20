@@ -2,6 +2,7 @@ import os
 import subprocess
 from typing import Literal
 import logging
+from tempfile import NamedTemporaryFile
 
 from config import LLMDPConfig
 
@@ -17,8 +18,23 @@ def call_lakpt_solver(
     """
     Call the docker LAKPT FF planner and return the plan as list of actions.
     """
-    with open(f"{LLMDPConfig.pddl_dir}/out_problem.pddl", "w") as file:
-        file.write(problem_file)
+    problem_temp_file = NamedTemporaryFile(
+        mode="w",
+        suffix=".pddl",
+        prefix="problem_",
+        dir=LLMDPConfig.pddl_dir,
+        delete=False,
+    )
+    problem_temp_file.write(problem_file)
+    problem_temp_file.close()
+
+    plan_temp_file = NamedTemporaryFile(
+        suffix=".ipc",
+        prefix="plan_",
+        dir=LLMDPConfig.pddl_dir,
+        delete=False,
+    )
+    plan_temp_file.close()
 
     # example command:
     # docker run --platform linux/amd64 --rm
@@ -41,9 +57,9 @@ def call_lakpt_solver(
         "--domain",
         f"/data/{LLMDPConfig.pddl_domain_file}",
         "--problem",
-        "/data/out_problem.pddl",
+        f"/data/{os.path.basename(problem_temp_file.name)}",
         "--output",
-        "/data/plan.ipc",
+        f"/data/{os.path.basename(plan_temp_file.name)}",
     ]
     result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if result.returncode != 0:
@@ -53,10 +69,12 @@ def call_lakpt_solver(
         logger.error("Planner Failure")
         return []
     try:
-        with open(f"{LLMDPConfig.pddl_dir}/plan.ipc", "r") as file:
+        with open(plan_temp_file.name, "r") as file:
             lines = file.readlines()
             content = [line.strip()[1:-1].lower() for line in lines]
-            os.remove(f"{LLMDPConfig.pddl_dir}/plan.ipc")
             return content
     except FileNotFoundError:
-        logger.warning("plan.ipc file not found")
+        logger.warning("{plan_temp_file.name} file not found")
+    finally:
+        os.remove(plan_temp_file.name)
+        os.remove(problem_temp_file.name)
