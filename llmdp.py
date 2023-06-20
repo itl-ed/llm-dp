@@ -194,7 +194,7 @@ def llm_find_objects(
             )
         except RateLimitError:
             time.sleep(10)
-            return llm_find_objects(objects, receptacles)
+            return llm_find_objects(objects, receptacles, logger=logger)
 
         reply_content = completion.choices[0].message
         funcs = reply_content.to_dict()["function_call"]["arguments"]
@@ -224,12 +224,14 @@ class LLMDPAgent:
         task_description: str,
         env_id=0,
         logger=None,
+        use_llm_search=False,
     ) -> None:
         self.initial_scene_observation = initial_scene_observation
         self.task_description = task_description
         self.env_id = env_id
         self.llm_tokens_sent = 0
         self.logger = logger
+        self.use_llm_search = use_llm_search
 
         # identify relevant objects and receptacle from task_description for goal
         self.relevant_task_objects = self.get_relevant_task_objects(task_description)
@@ -443,6 +445,8 @@ class LLMDPAgent:
                 out = f"heat {action_args[0]} with {action_args[1]}"
             case "coolobject":
                 out = f"cool {action_args[0]} with {action_args[1]}"
+            case _:
+                raise ValueError(f"Unknown action: {action_name}")
         return out.replace("-", " ")
 
     def get_pddl_goal(self) -> str:
@@ -473,7 +477,6 @@ class LLMDPAgent:
                 else:
                     predicates += f"({att} {r} {val})\n"
 
-        # TODO: use LLM to guess unobserved/missing target objects
         unseen_receptacles = [
             r
             for r, atts in self.scene_objects.items()
@@ -485,12 +488,30 @@ class LLMDPAgent:
             if not atts["seen"] and atts["type"] == "object"
         ]
 
-        likely_receptacle = llm_find_objects(
-            unseen_objects, unseen_receptacles, self.logger
-        )
-        for o in unseen_objects:
-            # predicates += f"(inReceptacle {o} {random.choice(unseen_receptacles)})\n"
-            predicates += f"(inReceptacle {o} {likely_receptacle})\n"
+        # if unseen objects, use LLM to guess receptacle
+        if len(unseen_objects) > 0:
+            # We can assume that the task is not to put an object in place that it already is
+            if len(unseen_receptacles) > 1:
+                unseen_receptacles = list(
+                    set(unseen_receptacles) - set(self.relevant_task_receptacles)
+                )
+
+            if len(unseen_receptacles) > 1:
+                # Use LLM to guess which receptacle
+                if self.use_llm_search:
+                    likely_receptacle = llm_find_objects(
+                        unseen_objects, unseen_receptacles, self.logger
+                    )
+                # Use a random unseen receptacle
+                else:
+                    likely_receptacle = random.choice(unseen_receptacles)
+
+            else:
+                # If there is only one unseen receptacle, use that
+                likely_receptacle = unseen_receptacles[0]
+
+            for o in unseen_objects:
+                predicates += f"(inReceptacle {o} {likely_receptacle})\n"
 
         pddl_init = f"(:init {predicates})\n"
         return pddl_init
@@ -700,7 +721,10 @@ if __name__ == "__main__":
             if name.startswith(k):
                 try:
                     agent = LLMDPAgent(
-                        scene_observation, task_description, logger=logger
+                        scene_observation,
+                        task_description,
+                        logger=logger,
+                        use_llm_search=LLMDPConfig.use_llm_search,
                     )
                     r, length = llmdp_run(agent)
                 except Exception as e:
