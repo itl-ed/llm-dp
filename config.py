@@ -11,6 +11,7 @@ class LLMDPBaseConfig(BaseSettings):
     seed: int = 42
     name: str = "search"
     llm_model: str = "text-davinci-003"
+    llm_chat_model: str = "gpt-3.5-turbo-0613"
     max_steps: int = 50
     platform: str = "linux/amd64"
     use_llm_search: bool = True

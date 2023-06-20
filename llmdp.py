@@ -20,6 +20,7 @@ from planner import call_lakpt_solver
 random.seed(LLMDPConfig.seed)
 
 encoding = tiktoken.encoding_for_model(LLMDPConfig.llm_model)
+chat_encoding = tiktoken.encoding_for_model(LLMDPConfig.llm_chat_model)
 openai.api_key = LLMDPConfig.openai_api_key
 
 
@@ -153,13 +154,37 @@ def llm_cache(prompt: str, stop=["\n"]) -> str:
 
 
 def llm_find_objects(
-    objects: list[str], receptacles: list[str], logger: logging.Logger
-) -> str:
+    objects: list[str],
+    receptacles: list[str],
+    logger: logging.Logger,
+) -> tuple[str, int]:
     """
     Uses the new function cabability of LLM to find most likely location of objects
     """
+    cache_file = (
+        f"{LLMDPConfig.output_dir}/llm_responses_{LLMDPConfig.llm_chat_model}.pickle"
+    )
+    llm_functions = [
+        {
+            "name": "find_object_at_location",
+            "description": "Pass most likely location where the items can be found",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string",
+                        "enum": receptacles,
+                        "description": "Most likely location",
+                    }
+                },
+                "required": ["location"],
+            },
+        }
+    ]
+    example_user_input = "Find the following objects: " + ", ".join(objects)
+    llm_messages = [{"role": "user", "content": example_user_input}]
+    num_tokens = len(chat_encoding.encode(str(llm_messages) + str(llm_functions)))
 
-    cache_file = f"{LLMDPConfig.output_dir}/llm_responses_gpt-3.5-turbo-0613.pickle"
     llm_responses = {}
     if os.path.exists(cache_file):
         with open(cache_file, "rb") as f:
@@ -167,28 +192,11 @@ def llm_find_objects(
     key = str(objects) + str(receptacles)
 
     if key not in llm_responses:
-        example_user_input = "Find the following objects: " + ", ".join(objects)
         try:
             completion = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo-0613",
-                messages=[{"role": "user", "content": example_user_input}],
-                functions=[
-                    {
-                        "name": "find_object_at_location",
-                        "description": "Pass most likely location where the items can be found",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "location": {
-                                    "type": "string",
-                                    "enum": receptacles,
-                                    "description": "Most likely location",
-                                }
-                            },
-                            "required": ["location"],
-                        },
-                    }
-                ],
+                model=LLMDPConfig.llm_chat_model,
+                messages=llm_messages,
+                functions=llm_functions,
                 function_call={"name": "find_object_at_location"},
                 temperature=0.0,
             )
@@ -208,9 +216,9 @@ def llm_find_objects(
         logger.warning(
             f"Hallucinated response looking for {str(objects)}: {llm_responses[key]}"
         )
-        return random.choice(receptacles)
+        return random.choice(receptacles), num_tokens
 
-    return llm_responses[key]
+    return llm_responses[key], num_tokens
 
 
 class LLMDPAgent:
@@ -230,6 +238,7 @@ class LLMDPAgent:
         self.task_description = task_description
         self.env_id = env_id
         self.llm_tokens_sent = 0
+        self.llm_chat_tokens_sent = 0
         self.logger = logger
         self.use_llm_search = use_llm_search
 
@@ -419,12 +428,6 @@ class LLMDPAgent:
     ) -> str:
         """
         Given a PDDL action, convert it to an Alfworld textworld action.
-        @TODO 2023-06-15 19:29:06,088 [INFO] PDDL GOAL: (:goal (exists (?t1 - object ?t2 - object)
-            (and (inReceptacle ?t1 sofa-1)
-            (inReceptacle ?t2 sofa-1)
-            (not (= ?t1 ?t2))
-            )))
-        2023-06-15 19:29:08,086 [ERROR] Error in taking action cannot access local variable 'out' where it is not associated with a value
         """
         match action_name:
             case "examineobjectinlight":
@@ -499,9 +502,10 @@ class LLMDPAgent:
             if len(unseen_receptacles) > 1:
                 # Use LLM to guess which receptacle
                 if self.use_llm_search:
-                    likely_receptacle = llm_find_objects(
+                    likely_receptacle, llm_tokens = llm_find_objects(
                         unseen_objects, unseen_receptacles, self.logger
                     )
+                    self.llm_chat_tokens_sent += llm_tokens
                 # Use a random unseen receptacle
                 else:
                     likely_receptacle = random.choice(unseen_receptacles)
@@ -741,6 +745,7 @@ if __name__ == "__main__":
                         "success": r,
                         "length": length,
                         "llm_tokens": agent.llm_tokens_sent,
+                        "llm_chat_tokens": agent.llm_chat_tokens_sent,
                     }
                 )
                 logger.info(f"# Tokens used: {agent.llm_tokens_sent}")
