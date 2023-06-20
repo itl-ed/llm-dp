@@ -13,6 +13,7 @@ class LLMDPBaseConfig(BaseSettings):
     llm_model: str = "text-davinci-003"
     max_steps: int = 50
     platform: str = "linux/amd64"
+    use_llm_search: bool = True
 
     class Config:
         env_file = ".env"
