@@ -73,7 +73,6 @@ FridgeType - rtype
 (openable ?r - receptacle) ; true if a receptacle is openable
 (opened ?r - receptacle) ; true if a receptacle is opened
 (isLight ?o - object) ; true if an object is light source
-(checked ?r - receptacle) ; whether the receptacle has been looked inside/visited
 (examined ?o - object ?l - object) ; whether the object has been looked at with light
 (holds ?o - object) ; object ?o is held by robot
 (isClean ?o - object) ; true if the object has been cleaned in sink
@@ -540,6 +539,10 @@ class LLMDPAgent:
         action_args = self.actions[-1]
         action_name = action_args[0]
         action_args = action_args[1:]
+
+        # we use the last action to update the scene
+        # NOTE: this is using the symbolic :effect of the action
+        #       as described in the PDDL domain
         match action_name:
             case "examineobjectinlight":
                 self.scene_objects[action_args[0]]["examined"] = action_args[1]

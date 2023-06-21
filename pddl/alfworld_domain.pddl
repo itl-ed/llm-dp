@@ -17,7 +17,6 @@
         (openable ?r - receptacle) ; true if a receptacle is openable
         (opened ?r - receptacle) ; true if a receptacle is opened
         (isLight ?o - object) ; true if an object is light source
-        (checked ?r - receptacle) ; whether the receptacle has been looked inside/visited
         (examined ?o - object ?l - object) ; whether the object has been looked at with light
         (holds ?o - object) ; object ?o is held by robot
         (isClean ?o - object) ; true if the object has been cleaned in sink
@@ -65,10 +64,7 @@
             (atReceptacleLocation ?r)
             (not (opened ?r))
         )
-        :effect (and
-            (opened ?r)
-            (checked ?r)
-        )
+        :effect (opened ?r)
     )
 
     ;; robot closes receptacle
