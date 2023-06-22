@@ -10,7 +10,7 @@ class LLMDPBaseConfig(BaseSettings):
     output_dir: str = "output"
     seed: int = 42
     name: str = "search"
-    llm_model: str = "text-davinci-003"
+    llm_model: str = "text-davinci-002"
     llm_chat_model: str = "gpt-3.5-turbo-0613"
     max_steps: int = 50
     platform: str = "linux/amd64"

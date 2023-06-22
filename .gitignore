@@ -1,5 +1,9 @@
 output/
 .DS_Store
+pddl/*.ipc
+pddl/*.ipc
+pddl/problem_*.pddl
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
