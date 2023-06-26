@@ -224,23 +224,6 @@ class LLMDPAgent:
         self.llm_tokens_sent += len(encoding.encode(prompt))
         return llm_cache(prompt, stop)
 
-    @staticmethod
-    def get_object_count_id(object_list: list[str]) -> list[str]:
-        """
-        Given a list of objects, return a list of objects with a count id appended to each object.
-        """
-        count_dict = {}
-        output_list = []
-
-        for item in object_list:
-            if item in count_dict:
-                count_dict[item] += 1
-            else:
-                count_dict[item] = 1
-            output_list.append(f"{item}-{count_dict[item]}")
-
-        return output_list
-
     def get_task_goal(
         self,
         task_description: str,
@@ -496,13 +479,12 @@ class LLMDPAgent:
                     del self.scene_objects[obj]["inReceptacle"]
 
             # update inReceptacle for all objects observed at this receptacle
-            # TODO: Test without: NOTE: we ignore seen objects that are not relevant to the task
-            # We also add objects of the same type as the target object
             for obj in objects:
-                if obj in self.scene_objects:
-                    self.scene_objects[obj]["type"] = obj.split("-")[0]
-                    self.scene_objects[obj]["seen"] = True
-                    self.scene_objects[obj]["inReceptacle"] = receptacle
+                self.scene_objects[obj]["type"] = obj.split("-")[0]
+                self.scene_objects[obj]["seen"] = True
+                self.scene_objects[obj]["inReceptacle"] = receptacle
+                if "lamp" in obj:
+                    self.scene_objects[obj]["isLight"] = True
 
         return scene_changed
 
