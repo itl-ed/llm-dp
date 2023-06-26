@@ -71,7 +71,9 @@ def call_lakpt_solver(
     try:
         with open(plan_temp_file.name, "r") as file:
             lines = file.readlines()
-            content = [line.strip()[1:-1].lower() for line in lines]
+            content = [
+                line.strip()[1:-1].lower() for line in lines if "REACH-GOAL" not in line
+            ]
             return content
     except FileNotFoundError:
         logger.warning("{plan_temp_file.name} file not found")
