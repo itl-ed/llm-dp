@@ -14,7 +14,7 @@ from openai.error import RateLimitError
 
 from logger import get_logger
 from config import LLMDPConfig
-from planner import parallel_lakpt_solver
+from planner import parallel_lapkt_solver
 
 encoding = tiktoken.encoding_for_model(LLMDPConfig.llm_model)
 chat_encoding = tiktoken.encoding_for_model(LLMDPConfig.llm_chat_model)
@@ -133,6 +133,9 @@ def llm_find_objects(
     if os.path.exists(cache_file):
         with open(cache_file, "rb") as f:
             llm_responses = pickle.load(f)
+
+    objects.sort()
+    receptacles.sort()
     key = str(objects) + str(receptacles)
 
     if key not in llm_responses:
@@ -213,9 +216,7 @@ class LLMDPAgent:
                 if "lamp" in name:
                     self.scene_objects[name]["isLight"] = True
 
-        self.plan = self.get_plan()
-
-        self.actions = []
+        self.actions_taken = []
 
     def llm(self, prompt, stop=["\n"]):
         self.llm_tokens_sent += len(encoding.encode(prompt))
@@ -417,12 +418,12 @@ class LLMDPAgent:
 
     def update_observation(self, observation: str) -> bool:
         if observation == "":
-            return False
+            return True
         scene_obs = {}
         scene_changed = True
 
         # use last action to update scene_objects
-        action_args = self.actions[-1]
+        action_args = self.actions_taken[-1]
         action_name = action_args[0]
         action_args = action_args[1:]
 
@@ -487,7 +488,7 @@ class LLMDPAgent:
 
     def get_plan(self) -> list[str]:
         problems = self.get_pddl_problem()
-        plans = parallel_lakpt_solver(problems, logger=self.logger)
+        plans = parallel_lapkt_solver(problems, logger=self.logger)
         # greedy selection strategy
         return min(plans, key=len)
 
@@ -495,12 +496,12 @@ class LLMDPAgent:
         # sometimes move action doesn't trigger observation (e.g. if already close)
         if (
             last_observation == "Nothing happens."
-            and self.actions[-1][0] == "gotoreceptacle"
+            and self.actions_taken[-1][0] == "gotoreceptacle"
         ):
-            return f"examine {self.actions[-1][1]}".replace("-", " ")
+            return f"examine {self.actions_taken[-1][1]}".replace("-", " ")
         # if last action was not move, then we should have observed something
         elif last_observation == "Nothing happens.":
-            raise Exception(f"Action {self.actions[-1][0]} failed.")
+            raise Exception(f"Action {self.actions_taken[-1][0]} failed.")
 
         # update scene_objects with last observation
         changed = self.update_observation(last_observation)
@@ -515,7 +516,7 @@ class LLMDPAgent:
         action_args = pddl_action.split(" ")
 
         # append action args to list of actions taken
-        self.actions.append(action_args)
+        self.actions_taken.append(action_args)
 
         alfworld_action = self.convert_pddl_action_to_alfworld(
             action_args[0], action_args[1:]
@@ -594,9 +595,10 @@ if __name__ == "__main__":
     rs = [0] * 6
     results = []
 
-    prev_results = []
-    with open(f"{run_name}.json", "rb") as f:
-        prev_results = json.loads(f.read())
+    # load previous results (if llm errors - useful for resuming)
+    # prev_results = []
+    # with open(f"{run_name}.json", "rb") as f:
+    #     prev_results = json.loads(f.read())
 
     for n in range(NUM_GAMEFILES):
         # Set seed for reproducibility
@@ -607,14 +609,14 @@ if __name__ == "__main__":
         scene_observation, task_description = ob.split("\n")
         name = "/".join(info["extra.gamefile"][0].split("/")[-3:-1])
 
-        # only run if prev failed (or if not in prev)
-        if n < len(prev_results) and prev_results[n]["success"]:
-            results.append(prev_results[n])
-            continue
-
         logger.info(name)
         logger.info(scene_observation)
         logger.info(task_description)
+
+        # only run if prev failed (or if not in prev)
+        # if n < len(prev_results) and prev_results[n]["success"]:
+        #     results.append(prev_results[n])
+        #     continue
 
         for i, (k, v) in enumerate(prefixes.items()):
             if name.startswith(k):

@@ -14,7 +14,7 @@ class LLMDPBaseConfig(BaseSettings):
     planner_timeout: int = 30
     planner_cpu_count: int = 4
     top_n: int = 3
-    platform: str = "linux/amd64"
+    platform: Literal["linux/amd64", "linux/arm64"] = "linux/arm64"
     output_dir: str = "output"
     seed: int = 42
     name: str = "base"

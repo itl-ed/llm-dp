@@ -8,12 +8,12 @@ from tempfile import NamedTemporaryFile
 from config import LLMDPConfig
 
 
-def call_lakpt_solver(
+def call_lapkt_solver(
     problem_file: str,
     logger: logging.Logger,
 ) -> list[str]:
     """
-    Call the docker LAKPT FF planner and return the plan as list of actions.
+    Call the docker lapkt FF planner and return the plan as list of actions.
     """
     problem_temp_file = NamedTemporaryFile(
         mode="w",
@@ -39,15 +39,21 @@ def call_lakpt_solver(
     # timeout 30s ./ff --domain /data/alfworld_domain.pddl
     #                 --problem /data/out_problem.pddl
     #                 --output /data/plan.ipc
+
+    if LLMDPConfig.platform == "linux/amd64":
+        docker_repo = "lapkt/lapkt-public"
+    elif LLMDPConfig.platform == "linux/arm64":
+        docker_repo = "gautierdag/lapkt-arm"
+    else:
+        raise ValueError(f"Unknown platform {LLMDPConfig.platform}")
+
     command = [
         "docker",
         "run",
-        "--platform",
-        LLMDPConfig.platform,  # specify platform in config (.env)
         "--rm",
         "-v",
         f"{os.getcwd()}/{LLMDPConfig.pddl_dir}:/data",
-        "lapkt/lapkt-public",
+        f"{docker_repo}",
         "timeout",
         f"{LLMDPConfig.planner_timeout}s",
         f"./{LLMDPConfig.planner_solver}",
@@ -79,12 +85,12 @@ def call_lakpt_solver(
         os.remove(problem_temp_file.name)
 
 
-def parallel_lakpt_solver(
+def parallel_lapkt_solver(
     problems: list[str], logger: logging.Logger
 ) -> list[list[str]]:
     with multiprocessing.Pool(processes=LLMDPConfig.planner_cpu_count) as pool:
         # Map the process_file function to the list of files
-        results = pool.map(partial(call_lakpt_solver, logger=logger), problems)
+        results = pool.map(partial(call_lapkt_solver, logger=logger), problems)
     # filter out empty plans
     results = [result for result in results if result]
     return results
