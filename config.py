@@ -1,4 +1,5 @@
 from pydantic import BaseSettings
+from typing import Literal
 
 
 class LLMDPBaseConfig(BaseSettings):
@@ -7,14 +8,20 @@ class LLMDPBaseConfig(BaseSettings):
     alfworld_config_path: str = "alfworld/configs"
     pddl_dir: str = "pddl"
     pddl_domain_file: str = "alfworld_domain.pddl"
+    planner_solver: Literal[
+        "bfs_f", "dfs_plus", "siw", "siw_plus", "siw-then-bfsf", "ff"
+    ] = "bfs_f"
+    planner_timeout: int = 30
+    planner_cpu_count: int = 4
+    top_n: int = 3
+    platform: str = "linux/amd64"
     output_dir: str = "output"
     seed: int = 42
-    name: str = "search"
-    llm_model: str = "text-davinci-002"
+    name: str = "base"
+    llm_model: str = "text-davinci-003"
     llm_chat_model: str = "gpt-3.5-turbo-0613"
     max_steps: int = 50
-    platform: str = "linux/amd64"
-    use_llm_search: bool = True
+    use_llm_search: bool = False
 
     class Config:
         env_file = ".env"

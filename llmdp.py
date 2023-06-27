@@ -14,10 +14,7 @@ from openai.error import RateLimitError
 
 from logger import get_logger
 from config import LLMDPConfig
-from planner import call_lakpt_solver
-
-# Set seed for reproducibility
-random.seed(LLMDPConfig.seed)
+from planner import parallel_lakpt_solver
 
 encoding = tiktoken.encoding_for_model(LLMDPConfig.llm_model)
 chat_encoding = tiktoken.encoding_for_model(LLMDPConfig.llm_chat_model)
@@ -490,13 +487,7 @@ class LLMDPAgent:
 
     def get_plan(self) -> list[str]:
         problems = self.get_pddl_problem()
-        plans = []
-        for problem in problems:
-            plan = call_lakpt_solver(problem, solver="bfs_f", logger=self.logger)
-            # validate plan
-            if len(plan) > 0:
-                plans.append(plan)
-
+        plans = parallel_lakpt_solver(problems, logger=self.logger)
         # greedy selection strategy
         return min(plans, key=len)
 
@@ -538,12 +529,12 @@ if __name__ == "__main__":
     import alfworld.agents.environment
 
     os.makedirs(LLMDPConfig.output_dir, exist_ok=True)
+    run_name = f"{LLMDPConfig.output_dir}/{LLMDPConfig.name}_{LLMDPConfig.top_n}_{LLMDPConfig.llm_model}"
 
     with open(f"{LLMDPConfig.alfworld_config_path}/base_config.yaml") as reader:
         config = yaml.safe_load(reader)
 
     split = "eval_out_of_distribution"
-    # split = "train"
 
     # UPDATE PATH TO ALFWORLD DATA
     for k in config:
@@ -565,9 +556,7 @@ if __name__ == "__main__":
 
     NUM_GAMEFILES = len(env.gamefiles)
 
-    logger = get_logger(
-        f"{LLMDPConfig.output_dir}/{LLMDPConfig.name}_{LLMDPConfig.llm_model}.log"
-    )
+    logger = get_logger(f"{run_name}.log")
 
     def llmdp_run(agent) -> tuple[int, int]:
         last_observation = ""
@@ -605,11 +594,24 @@ if __name__ == "__main__":
     rs = [0] * 6
     results = []
 
+    prev_results = []
+    with open(f"{run_name}.json", "rb") as f:
+        prev_results = json.loads(f.read())
+
     for n in range(NUM_GAMEFILES):
+        # Set seed for reproducibility
+        random.seed(LLMDPConfig.seed)
+
         ob, info = env.reset()
         ob = "\n".join(ob[0].split("\n\n")[1:])
         scene_observation, task_description = ob.split("\n")
         name = "/".join(info["extra.gamefile"][0].split("/")[-3:-1])
+
+        # only run if prev failed (or if not in prev)
+        if n < len(prev_results) and prev_results[n]["success"]:
+            results.append(prev_results[n])
+            continue
+
         logger.info(name)
         logger.info(scene_observation)
         logger.info(task_description)
@@ -622,6 +624,7 @@ if __name__ == "__main__":
                         task_description,
                         logger=logger,
                         use_llm_search=LLMDPConfig.use_llm_search,
+                        top_n=LLMDPConfig.top_n,
                     )
                     r, length = llmdp_run(agent)
                 except Exception as e:
@@ -648,8 +651,5 @@ if __name__ == "__main__":
 
         logger.info("------------\n")
         # save results
-        with open(
-            f"{LLMDPConfig.output_dir}/{LLMDPConfig.name}_{LLMDPConfig.llm_model}_results.json",
-            "w",
-        ) as f:
+        with open(f"{run_name}.json", "w") as f:
             json.dump(results, f)

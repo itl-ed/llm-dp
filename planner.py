@@ -1,6 +1,7 @@
 import os
 import subprocess
-from typing import Literal
+import multiprocessing
+from functools import partial
 import logging
 from tempfile import NamedTemporaryFile
 
@@ -10,10 +11,6 @@ from config import LLMDPConfig
 def call_lakpt_solver(
     problem_file: str,
     logger: logging.Logger,
-    solver: Literal[
-        "bfs_f", "dfs_plus", "siw", "siw_plus", "siw-then-bfsf", "ff"
-    ] = "bfs_f",
-    timeout=5,
 ) -> list[str]:
     """
     Call the docker LAKPT FF planner and return the plan as list of actions.
@@ -39,7 +36,7 @@ def call_lakpt_solver(
     # example command:
     # docker run --platform linux/amd64 --rm
     # -v ~/gpt-planner:/data lapkt/lapkt-public
-    # timeout 5s ./ff --domain /data/alfworld_domain.pddl
+    # timeout 30s ./ff --domain /data/alfworld_domain.pddl
     #                 --problem /data/out_problem.pddl
     #                 --output /data/plan.ipc
     command = [
@@ -52,8 +49,8 @@ def call_lakpt_solver(
         f"{os.getcwd()}/{LLMDPConfig.pddl_dir}:/data",
         "lapkt/lapkt-public",
         "timeout",
-        f"{timeout}s",
-        f"./{solver}",
+        f"{LLMDPConfig.planner_timeout}s",
+        f"./{LLMDPConfig.planner_solver}",
         "--domain",
         f"/data/{LLMDPConfig.pddl_domain_file}",
         "--problem",
@@ -61,14 +58,14 @@ def call_lakpt_solver(
         "--output",
         f"/data/{os.path.basename(plan_temp_file.name)}",
     ]
-    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if result.returncode != 0:
-        logger.warning(f"Command failed with return code {result.returncode}")
-        logger.warning(f"Standard output: {result.stdout.decode()}")
-        logger.error(f"Standard error: {result.stderr.decode()}")
-        logger.error("Planner Failure")
-        return []
     try:
+        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if result.returncode != 0:
+            logger.warning(f"Command failed with return code {result.returncode}")
+            logger.warning(f"Standard output: {result.stdout.decode()}")
+            logger.error(f"Standard error: {result.stderr.decode()}")
+            logger.error("Planner Failure")
+            return []
         with open(plan_temp_file.name, "r") as file:
             lines = file.readlines()
             content = [
@@ -80,3 +77,14 @@ def call_lakpt_solver(
     finally:
         os.remove(plan_temp_file.name)
         os.remove(problem_temp_file.name)
+
+
+def parallel_lakpt_solver(
+    problems: list[str], logger: logging.Logger
+) -> list[list[str]]:
+    with multiprocessing.Pool(processes=LLMDPConfig.planner_cpu_count) as pool:
+        # Map the process_file function to the list of files
+        results = pool.map(partial(call_lakpt_solver, logger=logger), problems)
+    # filter out empty plans
+    results = [result for result in results if result]
+    return results
