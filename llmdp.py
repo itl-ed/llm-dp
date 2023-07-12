@@ -587,11 +587,6 @@ if __name__ == "__main__":
         ob = "\n".join(ob[0].split("\n\n")[1:])
         scene_observation, task_description = ob.split("\n")
         name = "/".join(info["extra.gamefile"][0].split("/")[-3:-1])
-        if (
-            name
-            != "pick_and_place_simple-Vase-None-Safe-219/trial_T20190908_205204_244321"
-        ):
-            continue
 
         logger.info(name)
         logger.info(scene_observation)
