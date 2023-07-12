@@ -1,5 +1,4 @@
 (define (domain alfred)
-
     (:predicates
         (isReceptacle ?o - object) ; true if the object is a receptacle
         (atReceptacleLocation ?r - object) ; true if the robot is at the receptacle location

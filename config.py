@@ -17,10 +17,9 @@ class LLMDPBaseConfig(BaseSettings):
     platform: Literal["linux/amd64", "linux/arm64"] = "linux/arm64"
     output_dir: str = "output"
     seed: int = 42
-    name: str = "base"
+    name: str = "random"
     llm_model: str = "text-davinci-003"
     llm_chat_model: str = "gpt-3.5-turbo-0613"
-    max_steps: int = 50
     use_llm_search: bool = False
 
     class Config:

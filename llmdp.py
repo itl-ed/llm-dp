@@ -37,8 +37,7 @@ GENERATE_GOAL_PROMPT = """(define (domain alfred)
 (isSink ?o - object) ; true if the object is a sink
 (isMicrowave ?o - object) ; true if the object is a microwave
 (isFridge ?o - object) ; true if the object is a fridge
-)
-)
+))
 TASK: Your task is to: put a clean plate in microwave.
 (:goal
 (exists (?t - plate ?r - microwave)
@@ -97,75 +96,75 @@ def llm_cache(prompt: str, stop=["\n"]) -> str:
     return llm_responses[prompt]
 
 
-def llm_find_objects(
-    objects: list[str],
-    receptacles: list[str],
-    logger: logging.Logger,
-) -> tuple[str, int]:
-    """
-    Uses the new function cabability of LLM to find most likely location of objects
-    """
-    cache_file = (
-        f"{LLMDPConfig.output_dir}/llm_responses_{LLMDPConfig.llm_chat_model}.pickle"
-    )
-    llm_functions = [
-        {
-            "name": "find_object_at_location",
-            "description": "Pass most likely location where the items can be found",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "location": {
-                        "type": "string",
-                        "enum": receptacles,
-                        "description": "Most likely location",
-                    }
-                },
-                "required": ["location"],
-            },
-        }
-    ]
-    example_user_input = "Find the following objects: " + ", ".join(objects)
-    llm_messages = [{"role": "user", "content": example_user_input}]
-    num_tokens = len(chat_encoding.encode(str(llm_messages) + str(llm_functions)))
+# def llm_find_objects(
+#     objects: list[str],
+#     receptacles: list[str],
+#     logger: logging.Logger,
+# ) -> tuple[str, int]:
+#     """
+#     Uses the new function cabability of LLM to find most likely location of objects
+#     """
+#     cache_file = (
+#         f"{LLMDPConfig.output_dir}/llm_responses_{LLMDPConfig.llm_chat_model}.pickle"
+#     )
+#     llm_functions = [
+#         {
+#             "name": "find_object_at_location",
+#             "description": "Pass most likely location where the items can be found",
+#             "parameters": {
+#                 "type": "object",
+#                 "properties": {
+#                     "location": {
+#                         "type": "string",
+#                         "enum": receptacles,
+#                         "description": "Most likely location",
+#                     }
+#                 },
+#                 "required": ["location"],
+#             },
+#         }
+#     ]
+#     example_user_input = "Find the following objects: " + ", ".join(objects)
+#     llm_messages = [{"role": "user", "content": example_user_input}]
+#     num_tokens = len(chat_encoding.encode(str(llm_messages) + str(llm_functions)))
 
-    llm_responses = {}
-    if os.path.exists(cache_file):
-        with open(cache_file, "rb") as f:
-            llm_responses = pickle.load(f)
+#     llm_responses = {}
+#     if os.path.exists(cache_file):
+#         with open(cache_file, "rb") as f:
+#             llm_responses = pickle.load(f)
 
-    objects.sort()
-    receptacles.sort()
-    key = str(objects) + str(receptacles)
+#     objects.sort()
+#     receptacles.sort()
+#     key = str(objects) + str(receptacles)
 
-    if key not in llm_responses:
-        try:
-            completion = openai.ChatCompletion.create(
-                model=LLMDPConfig.llm_chat_model,
-                messages=llm_messages,
-                functions=llm_functions,
-                function_call={"name": "find_object_at_location"},
-                temperature=0.0,
-            )
-        except RateLimitError:
-            time.sleep(10)
-            return llm_find_objects(objects, receptacles, logger=logger)
+#     if key not in llm_responses:
+#         try:
+#             completion = openai.ChatCompletion.create(
+#                 model=LLMDPConfig.llm_chat_model,
+#                 messages=llm_messages,
+#                 functions=llm_functions,
+#                 function_call={"name": "find_object_at_location"},
+#                 temperature=0.0,
+#             )
+#         except RateLimitError:
+#             time.sleep(10)
+#             return llm_find_objects(objects, receptacles, logger=logger)
 
-        reply_content = completion.choices[0].message
-        funcs = reply_content.to_dict()["function_call"]["arguments"]
+#         reply_content = completion.choices[0].message
+#         funcs = reply_content.to_dict()["function_call"]["arguments"]
 
-        llm_responses[key] = json.loads(funcs)["location"]
-        with open(cache_file, "wb") as f:
-            pickle.dump(llm_responses, f)
+#         llm_responses[key] = json.loads(funcs)["location"]
+#         with open(cache_file, "wb") as f:
+#             pickle.dump(llm_responses, f)
 
-    if llm_responses[key] not in receptacles:
-        # hallucinated response
-        logger.warning(
-            f"Hallucinated response looking for {str(objects)}: {llm_responses[key]}"
-        )
-        return random.choice(receptacles), num_tokens
+#     if llm_responses[key] not in receptacles:
+#         # hallucinated response
+#         logger.warning(
+#             f"Hallucinated response looking for {str(objects)}: {llm_responses[key]}"
+#         )
+#         return random.choice(receptacles), num_tokens
 
-    return llm_responses[key], num_tokens
+#     return llm_responses[key], num_tokens
 
 
 class LLMDPAgent:
@@ -212,7 +211,14 @@ class LLMDPAgent:
             for i in range(1, int(count) + 1):
                 name = f"{o}-{i}"
                 self.scene_objects[name]["type"] = o
-                self.scene_objects[name]["seen"] = False
+
+                # initialise beliefs about the object's location
+                self.scene_objects[name]["beliefs"] = {}
+                # all receptacles are possible locations for an object
+                self.scene_objects[name]["beliefs"][
+                    "inReceptacle"
+                ] = self.scene_receptacles.copy()
+
                 if "lamp" in name:
                     self.scene_objects[name]["isLight"] = True
 
@@ -299,7 +305,6 @@ class LLMDPAgent:
             attributes["openable"] = True
 
         attributes["type"] = receptacle.split("-")[0]
-        attributes["seen"] = False
         attributes["isReceptacle"] = True
 
         return attributes
@@ -348,56 +353,37 @@ class LLMDPAgent:
 
     def get_pddl_init(self) -> list[str]:
         # fill in known predicates from observation
-        fixed_predicates = ""
-        # fixed predicates
+        known_predicates = ""
+        
+        # known predicates
         for r, atts in self.scene_objects.items():
             for att, val in atts.items():
-                if att in ["type", "seen"] or val is False:
+                if att in ["type", "beliefs"] or val is False:
                     continue
                 if val is True:
-                    fixed_predicates += f"({att} {r})\n"
+                    known_predicates += f"({att} {r})\n"
                 else:
-                    fixed_predicates += f"({att} {r} {val})\n"
+                    known_predicates += f"({att} {r} {val})\n"
 
         # dynamic predicates (World Beliefs)
-        unseen_receptacles = [
-            r
-            for r, atts in self.scene_objects.items()
-            if not atts["seen"] and "isReceptacle" in atts
-        ]
-        unseen_objects = [
-            o
-            for o, atts in self.scene_objects.items()
-            if not atts["seen"] and "isReceptacle" not in atts
-        ]
-
-        # if no unseen objects, return fixed predicates
-        if len(unseen_objects) == 0:
-            return [f"(:init {fixed_predicates})\n"]
-
         belief_predicates = []
         for _ in range(self.top_n):
-            # if no unseen receptacles
-            if len(unseen_receptacles) == 0:
-                break
-
-            belief_predicate = fixed_predicates
-            # Use LLM to guess which receptacle
-            if self.use_llm_search:
-                likely_receptacle, llm_tokens = llm_find_objects(
-                    unseen_objects, unseen_receptacles, self.logger
-                )
-                self.llm_chat_tokens_sent += llm_tokens
-            # Use a random unseen receptacle otherwise
-            else:
-                likely_receptacle = random.choice(unseen_receptacles)
-
-            # remove likely receptacle from unseen receptacles
-            unseen_receptacles.remove(likely_receptacle)
-
-            # guess that object in likely receptacle
-            for o in unseen_objects:
-                belief_predicate += f"(inReceptacle {o} {likely_receptacle})\n"
+            belief_predicate = known_predicates
+            for o, atts in self.scene_objects.items():
+                if "beliefs" in atts:
+                    for belief_attribute in atts["beliefs"]:
+                        options = atts["beliefs"][belief_attribute]
+                        # Use LLM to guess which receptacle
+                        # if self.use_llm_search:
+                        #     sampled_belief, llm_tokens = llm_find_objects(
+                        #         options, self.logger
+                        #     )
+                        #     self.llm_chat_tokens_sent += llm_tokens
+                        # else:
+                        sampled_belief = random.choice(options)
+                        belief_predicate += (
+                            f"({belief_attribute} {o} {sampled_belief})\n"
+                        )
 
             belief_predicates.append(belief_predicate)
 
@@ -417,10 +403,12 @@ class LLMDPAgent:
         return problems
 
     def update_observation(self, observation: str) -> bool:
+        # case for initial observation
         if observation == "":
             return True
+
         scene_obs = {}
-        scene_changed = True
+        scene_changed = False
 
         # use last action to update scene_objects
         action_args = self.actions_taken[-1]
@@ -461,26 +449,33 @@ class LLMDPAgent:
                 self.scene_objects[action_args[0]]["isClean"] = True
 
         # use observation to update scene_objects
-        for receptacle, objects in scene_obs.items():
-            self.scene_objects[receptacle]["seen"] = True
-
+        for receptacle, seen_objects in scene_obs.items():
             # if you can see objects in receptacle, it must be opened
             if "openable" in self.scene_objects[receptacle]:
                 self.scene_objects[receptacle]["opened"] = True
 
-            # remove inReceptacle from all objects not observed at this receptacle
+            # update belief
+            # all objects not observed at this receptacle cannot be believed to be in it
             for obj in self.scene_objects.keys():
                 if (
-                    "inReceptacle" in self.scene_objects[obj]
-                    and self.scene_objects[obj]["inReceptacle"] == receptacle
+                    obj not in seen_objects
+                    and "beliefs" in self.scene_objects[obj]
+                    and "inReceptacle" in self.scene_objects[obj]["beliefs"]
+                    and receptacle in self.scene_objects[obj]["beliefs"]["inReceptacle"]
                 ):
-                    del self.scene_objects[obj]["inReceptacle"]
+                    self.scene_objects[obj]["beliefs"]["inReceptacle"].remove(
+                        receptacle
+                    )
 
             # update inReceptacle for all objects observed at this receptacle
-            for obj in objects:
+            for obj in seen_objects:
                 self.scene_objects[obj]["type"] = obj.split("-")[0]
-                self.scene_objects[obj]["seen"] = True
                 self.scene_objects[obj]["inReceptacle"] = receptacle
+                if (
+                    "beliefs" in self.scene_objects[obj]
+                    and "inReceptacle" in self.scene_objects[obj]["beliefs"]
+                ):
+                    del self.scene_objects[obj]["beliefs"]["inReceptacle"]
                 if "lamp" in obj:
                     self.scene_objects[obj]["isLight"] = True
 
@@ -561,7 +556,7 @@ if __name__ == "__main__":
 
     def llmdp_run(agent) -> tuple[int, int]:
         last_observation = ""
-        for i in range(1, LLMDPConfig.max_steps):
+        for i in range(1, 50):
             try:
                 action = agent.take_action(last_observation=last_observation)
             except Exception as e:
@@ -596,9 +591,9 @@ if __name__ == "__main__":
     results = []
 
     # load previous results (if llm errors - useful for resuming)
-    # prev_results = []
+    prev_results = []
     # with open(f"{run_name}.json", "rb") as f:
-    #     prev_results = json.loads(f.read())
+    # prev_results = json.loads(f.read())
 
     for n in range(NUM_GAMEFILES):
         # Set seed for reproducibility
@@ -614,9 +609,9 @@ if __name__ == "__main__":
         logger.info(task_description)
 
         # only run if prev failed (or if not in prev)
-        # if n < len(prev_results) and prev_results[n]["success"]:
-        #     results.append(prev_results[n])
-        #     continue
+        if n < len(prev_results) and prev_results[n]["success"]:
+            results.append(prev_results[n])
+            continue
 
         for i, (k, v) in enumerate(prefixes.items()):
             if name.startswith(k):
