@@ -4,24 +4,23 @@ import pickle
 import random
 import re
 import time
-import logging
-from collections import defaultdict, Counter
+from collections import Counter, defaultdict
 
 import openai
-import tiktoken
 import yaml
 from openai.error import RateLimitError
 
-from logger import get_logger
 from config import LLMDPConfig
+from logger import get_logger
 from planner import parallel_lapkt_solver
 
-encoding = tiktoken.encoding_for_model(LLMDPConfig.llm_model)
-chat_encoding = tiktoken.encoding_for_model(LLMDPConfig.llm_chat_model)
 openai.api_key = LLMDPConfig.openai_api_key
 
 
-GENERATE_GOAL_PROMPT = """(define (domain alfred)
+GENERATE_GOAL_PROMPT = [
+    {
+        "role": "system",
+        "content": """(define (domain alfred)
 (:predicates
 (isReceptacle ?o - object) ; true if the object is a receptacle
 (atReceptacleLocation ?r - object) ; true if the robot is at the receptacle location
@@ -37,134 +36,81 @@ GENERATE_GOAL_PROMPT = """(define (domain alfred)
 (isSink ?o - object) ; true if the object is a sink
 (isMicrowave ?o - object) ; true if the object is a microwave
 (isFridge ?o - object) ; true if the object is a fridge
-))
-TASK: Your task is to: put a clean plate in microwave.
-(:goal
+))""",
+    },
+    {
+        "role": "user",
+        "content": "Your task is to: put a clean plate in microwave.",
+    },
+    {
+        "role": "assistant",
+        "content": """(:goal
 (exists (?t - plate ?r - microwave)
 (and (inReceptacle ?t ?r)
 (isClean ?t)
-)))
-TASK: Your task is to: examine an alarmclock with the desklamp
-(:goal
+)))""",
+    },
+    {
+        "role": "user",
+        "content": "Your task is to: examine an alarmclock with the desklamp",
+    },
+    {
+        "role": "assistant",
+        "content": """(:goal
 (exists (?t - alarmclock ?l - desklamp)
 (and (examined ?t ?l) (holds ?t)
-)))
-TASK: Your task is to: put two cellphone in bed
-(:goal
+)))""",
+    },
+    {"role": "user", "content": "Your task is to: put two cellphone in bed"},
+    {
+        "role": "assistant",
+        "content": """(:goal
 (exists (?t1 - cellphone ?t2 - cellphone ?r - bed)
 (and (inReceptacle ?t1 ?r)
 (inReceptacle ?t2 ?r)
 (not (= ?t1 ?t2))
-)))"""
+)))""",
+    },
+]
 
 
-def llm(prompt: str, stop=["\n"]) -> str:
+def llm(llm_messages: list[str], stop=None) -> tuple[str, dict[str, int]]:
     try:
-        response = openai.Completion.create(
-            model=LLMDPConfig.llm_model,
-            prompt=prompt,
+        completion = openai.ChatCompletion.create(
+            model=LLMDPConfig.llm_chat_model,
+            messages=llm_messages,
             temperature=0.0,
             max_tokens=100,
-            top_p=1,
             frequency_penalty=0.0,
             presence_penalty=0.0,
             stop=stop,
         )
-        return response["choices"][0]["text"]
+        return completion.choices[0].message["content"], dict(completion["usage"])
     except RateLimitError:
         time.sleep(10)
-        return llm(prompt, stop=stop)
+        return llm(llm_messages, stop=stop)
 
 
-def llm_cache(prompt: str, stop=["\n"]) -> str:
-    """
-    cache same llm responses into a pickle file
-    This avoids paying for the same prompt multiple times
-    It also allows us to replicate the results
-    """
+def llm_cache(
+    llm_messages: list[dict[str]],
+    stop=None,
+) -> tuple[str, int]:
     cache_file = (
-        f"{LLMDPConfig.output_dir}/llm_responses_{LLMDPConfig.llm_model}.pickle"
+        f"{LLMDPConfig.output_dir}/llm_responses_{LLMDPConfig.llm_chat_model}.pickle"
     )
     llm_responses = {}
     if os.path.exists(cache_file):
         with open(cache_file, "rb") as f:
             llm_responses = pickle.load(f)
-    if prompt not in llm_responses:
-        llm_responses[prompt] = llm(prompt, stop=stop)
+
+    key = json.dumps(llm_messages)
+    if key not in llm_responses:
+        generated_content, token_usage = llm(llm_messages, stop=stop)
+        llm_responses[key] = (generated_content, token_usage)
         with open(cache_file, "wb") as f:
             pickle.dump(llm_responses, f)
-    return llm_responses[prompt]
 
-
-# def llm_find_objects(
-#     objects: list[str],
-#     receptacles: list[str],
-#     logger: logging.Logger,
-# ) -> tuple[str, int]:
-#     """
-#     Uses the new function cabability of LLM to find most likely location of objects
-#     """
-#     cache_file = (
-#         f"{LLMDPConfig.output_dir}/llm_responses_{LLMDPConfig.llm_chat_model}.pickle"
-#     )
-#     llm_functions = [
-#         {
-#             "name": "find_object_at_location",
-#             "description": "Pass most likely location where the items can be found",
-#             "parameters": {
-#                 "type": "object",
-#                 "properties": {
-#                     "location": {
-#                         "type": "string",
-#                         "enum": receptacles,
-#                         "description": "Most likely location",
-#                     }
-#                 },
-#                 "required": ["location"],
-#             },
-#         }
-#     ]
-#     example_user_input = "Find the following objects: " + ", ".join(objects)
-#     llm_messages = [{"role": "user", "content": example_user_input}]
-#     num_tokens = len(chat_encoding.encode(str(llm_messages) + str(llm_functions)))
-
-#     llm_responses = {}
-#     if os.path.exists(cache_file):
-#         with open(cache_file, "rb") as f:
-#             llm_responses = pickle.load(f)
-
-#     objects.sort()
-#     receptacles.sort()
-#     key = str(objects) + str(receptacles)
-
-#     if key not in llm_responses:
-#         try:
-#             completion = openai.ChatCompletion.create(
-#                 model=LLMDPConfig.llm_chat_model,
-#                 messages=llm_messages,
-#                 functions=llm_functions,
-#                 function_call={"name": "find_object_at_location"},
-#                 temperature=0.0,
-#             )
-#         except RateLimitError:
-#             time.sleep(10)
-#             return llm_find_objects(objects, receptacles, logger=logger)
-
-#         reply_content = completion.choices[0].message
-#         funcs = reply_content.to_dict()["function_call"]["arguments"]
-
-#         llm_responses[key] = json.loads(funcs)["location"]
-#         with open(cache_file, "wb") as f:
-#             pickle.dump(llm_responses, f)
-
-#     if llm_responses[key] not in receptacles:
-#         # hallucinated response
-#         logger.warning(
-#             f"Hallucinated response looking for {str(objects)}: {llm_responses[key]}"
-#         )
-#         return random.choice(receptacles), num_tokens
-
-#     return llm_responses[key], num_tokens
+    return llm_responses[key]
 
 
 class LLMDPAgent:
@@ -214,30 +160,18 @@ class LLMDPAgent:
 
                 # initialise beliefs about the object's location
                 self.scene_objects[name]["beliefs"] = {}
-                # all receptacles are possible locations for an object
-                self.scene_objects[name]["beliefs"][
-                    "inReceptacle"
-                ] = self.scene_receptacles.copy()
+
+                # if not a receptacle, then it's location is unknown
+                if "isReceptacle" not in self.scene_objects[name]:
+                    # all receptacles are possible locations for an object
+                    self.scene_objects[name]["beliefs"][
+                        "inReceptacle"
+                    ] = self.scene_receptacles.copy()
 
                 if "lamp" in name:
                     self.scene_objects[name]["isLight"] = True
 
         self.actions_taken = []
-
-    def llm(self, prompt, stop=["\n"]):
-        self.llm_tokens_sent += len(encoding.encode(prompt))
-        return llm_cache(prompt, stop)
-
-    def get_task_goal(
-        self,
-        task_description: str,
-    ) -> list[str]:
-        """
-        Given a task description, relevant objects/receptacles return the PDDL goal.
-        """
-        prompt = f"{GENERATE_GOAL_PROMPT}\nTASK: {task_description}\n(goal:"
-        pddl_goal = self.llm(prompt, stop=None).strip()
-        return pddl_goal
 
     @staticmethod
     def process_obs(observation: str) -> dict:
@@ -340,9 +274,43 @@ class LLMDPAgent:
         return out.replace("-", " ")
 
     def get_pddl_goal(self) -> str:
-        # use LLM to complete pddl goal
-        completed_pddl_goal = self.get_task_goal(self.task_description)
-        return f"(:goal {completed_pddl_goal}"
+        """
+        Given a task description return the PDDL goal using an LLM.
+        """
+        prompt_messages = GENERATE_GOAL_PROMPT + [
+            {
+                "role": "user",
+                "content": self.task_description,
+            }
+        ]
+        pddl_goal, token_usage = llm_cache(prompt_messages, stop=None)
+        self.llm_tokens_sent += token_usage["total_tokens"]
+        return pddl_goal
+
+    def get_pddl_belief_predicate(
+        self, init_str: str, belief_predicate: str, belief_values: list[str], top_n: 1
+    ) -> list[str]:
+        """
+        Given a task description return the PDDL goal using an LLM.
+        """
+        user_prompt = (
+            f"Predict: {belief_predicate}"
+            + f"Select the top {top_n} likely items for ? from the list: {belief_values}"
+            + "Return a parsable python list of choices."
+        )
+        prompt_messages = [
+            {"role": "system", "content": f"Observed Environment\n{init_str}"},
+            {"role": "user", "content": user_prompt},
+        ]
+        selected_values, token_usage = llm_cache(prompt_messages, stop=None)
+        self.llm_tokens_sent += token_usage["total_tokens"]
+        # parse the selected values as list
+        try:
+            selected_values = re.findall(r"'(.*?)'", selected_values)
+        except Exception as e:
+            self.logger.info(f"Error parsing selected values: {selected_values}")
+            raise e
+        return selected_values
 
     def get_pddl_objects(self) -> str:
         # get all objects/receptacles in scene
@@ -354,7 +322,7 @@ class LLMDPAgent:
     def get_pddl_init(self) -> list[str]:
         # fill in known predicates from observation
         known_predicates = ""
-        
+
         # known predicates
         for r, atts in self.scene_objects.items():
             for att, val in atts.items():
@@ -366,28 +334,44 @@ class LLMDPAgent:
                     known_predicates += f"({att} {r} {val})\n"
 
         # dynamic predicates (World Beliefs)
-        belief_predicates = []
-        for _ in range(self.top_n):
-            belief_predicate = known_predicates
-            for o, atts in self.scene_objects.items():
-                if "beliefs" in atts:
-                    for belief_attribute in atts["beliefs"]:
-                        options = atts["beliefs"][belief_attribute]
+        belief_predicates = [known_predicates] * self.top_n
+        for o, atts in self.scene_objects.items():
+            if "beliefs" in atts:
+                for belief_attribute in atts["beliefs"]:
+                    options = atts["beliefs"][belief_attribute]
+
+                    # sample N different worlds for each belief
+                    if self.use_llm_search:
                         # Use LLM to guess which receptacle
-                        # if self.use_llm_search:
-                        #     sampled_belief, llm_tokens = llm_find_objects(
-                        #         options, self.logger
-                        #     )
-                        #     self.llm_chat_tokens_sent += llm_tokens
-                        # else:
-                        sampled_belief = random.choice(options)
-                        belief_predicate += (
-                            f"({belief_attribute} {o} {sampled_belief})\n"
+                        sampled_beliefs = self.get_pddl_belief_predicate(
+                            init_str=known_predicates,
+                            belief_predicate=f"({belief_attribute} {o} ?)",
+                            belief_values=options,
+                            top_n=self.top_n,
                         )
+                        # ensure that the sampled belief is in the list of options
+                        hallucination_set = set(sampled_beliefs) - set(options)
+                        for i, element in enumerate(sampled_beliefs):
+                            if element in hallucination_set:
+                                self.logger.warning(
+                                    f"Hallucination: Sampled belief {element} not in {options}"
+                                )
+                                sampled_beliefs[i] = random.choice(options)
+                    else:
+                        sampled_beliefs = random.choices(options, k=self.top_n)
 
-            belief_predicates.append(belief_predicate)
+                    # append the sampled belief predicate to each world state
+                    belief_predicates = list(
+                        map(
+                            lambda x, s: x + f"({belief_attribute} {o} {s})\n",
+                            belief_predicates,
+                            sampled_beliefs,
+                        )
+                    )
 
-        return [f"(:init {predicates})\n" for predicates in belief_predicates]
+        return list(
+            set([f"(:init {predicates})\n" for predicates in belief_predicates])
+        )
 
     def get_pddl_problem(self) -> list[str]:
         # get n different init configurations
@@ -603,6 +587,11 @@ if __name__ == "__main__":
         ob = "\n".join(ob[0].split("\n\n")[1:])
         scene_observation, task_description = ob.split("\n")
         name = "/".join(info["extra.gamefile"][0].split("/")[-3:-1])
+        if (
+            name
+            != "pick_and_place_simple-Vase-None-Safe-219/trial_T20190908_205204_244321"
+        ):
+            continue
 
         logger.info(name)
         logger.info(scene_observation)
