@@ -36,8 +36,8 @@
     ;; robot goes to receptacle
     (:action GotoReceptacle
         :parameters (?rEnd - object)
+        :precondition (isReceptacle ?rEnd)
         :effect (and
-            (isReceptacle ?rEnd)
             (atReceptacleLocation ?rEnd)
             (forall
                 (?r - object)

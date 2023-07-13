@@ -13,13 +13,12 @@ class LLMDPBaseConfig(BaseSettings):
     ] = "bfs_f"
     planner_timeout: int = 30
     planner_cpu_count: int = 4
-    top_n: int = 3
+    top_n: int = 5
     platform: Literal["linux/amd64", "linux/arm64"] = "linux/arm64"
     output_dir: str = "output"
     seed: int = 42
-    name: str = "random"
-    llm_model: str = "text-davinci-003"
-    llm_chat_model: str = "gpt-3.5-turbo-0613"
+    name: str = "chat_random"
+    llm_model: str = "gpt-3.5-turbo-0613"
     use_llm_search: bool = False
 
     class Config:

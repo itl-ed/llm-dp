@@ -1,21 +1,16 @@
 import json
 import os
-import pickle
 import random
 import re
-import time
+
 from collections import Counter, defaultdict
 
-import openai
 import yaml
-from openai.error import RateLimitError
 
 from config import LLMDPConfig
 from logger import get_logger
 from planner import parallel_lapkt_solver
-
-openai.api_key = LLMDPConfig.openai_api_key
-
+from llm_utils import llm_cache
 
 GENERATE_GOAL_PROMPT = [
     {
@@ -72,45 +67,6 @@ GENERATE_GOAL_PROMPT = [
 )))""",
     },
 ]
-
-
-def llm(llm_messages: list[str], stop=None) -> tuple[str, dict[str, int]]:
-    try:
-        completion = openai.ChatCompletion.create(
-            model=LLMDPConfig.llm_chat_model,
-            messages=llm_messages,
-            temperature=0.0,
-            max_tokens=100,
-            frequency_penalty=0.0,
-            presence_penalty=0.0,
-            stop=stop,
-        )
-        return completion.choices[0].message["content"], dict(completion["usage"])
-    except RateLimitError:
-        time.sleep(10)
-        return llm(llm_messages, stop=stop)
-
-
-def llm_cache(
-    llm_messages: list[dict[str]],
-    stop=None,
-) -> tuple[str, int]:
-    cache_file = (
-        f"{LLMDPConfig.output_dir}/llm_responses_{LLMDPConfig.llm_chat_model}.pickle"
-    )
-    llm_responses = {}
-    if os.path.exists(cache_file):
-        with open(cache_file, "rb") as f:
-            llm_responses = pickle.load(f)
-
-    key = json.dumps(llm_messages)
-    if key not in llm_responses:
-        generated_content, token_usage = llm(llm_messages, stop=stop)
-        llm_responses[key] = (generated_content, token_usage)
-        with open(cache_file, "wb") as f:
-            pickle.dump(llm_responses, f)
-
-    return llm_responses[key]
 
 
 class LLMDPAgent:
@@ -294,8 +250,9 @@ class LLMDPAgent:
         Given a task description return the PDDL goal using an LLM.
         """
         user_prompt = (
-            f"Predict: {belief_predicate}"
-            + f"Select the top {top_n} likely items for ? from the list: {belief_values}"
+            f"Predict: {belief_predicate}\n"
+            + f"Select the top {top_n} likely items for ? from the list:"
+            + f"{sorted(belief_values)}\n"
             + "Return a parsable python list of choices."
         )
         prompt_messages = [
@@ -319,7 +276,7 @@ class LLMDPAgent:
         )
         return f"(:objects {objects_str})\n"
 
-    def get_pddl_init(self) -> list[str]:
+    def get_pddl_init(self, sample="random") -> list[str]:
         # fill in known predicates from observation
         known_predicates = ""
 
@@ -341,7 +298,9 @@ class LLMDPAgent:
                     options = atts["beliefs"][belief_attribute]
 
                     # sample N different worlds for each belief
-                    if self.use_llm_search:
+                    if sample == "random":
+                        sampled_beliefs = random.choices(options, k=self.top_n)
+                    elif sample == "llm":
                         # Use LLM to guess which receptacle
                         sampled_beliefs = self.get_pddl_belief_predicate(
                             init_str=known_predicates,
@@ -358,7 +317,7 @@ class LLMDPAgent:
                                 )
                                 sampled_beliefs[i] = random.choice(options)
                     else:
-                        sampled_beliefs = random.choices(options, k=self.top_n)
+                        raise ValueError(f"Unknown sample method: {sample}")
 
                     # append the sampled belief predicate to each world state
                     belief_predicates = list(
@@ -373,9 +332,9 @@ class LLMDPAgent:
             set([f"(:init {predicates})\n" for predicates in belief_predicates])
         )
 
-    def get_pddl_problem(self) -> list[str]:
+    def get_pddl_problem(self, sample="random") -> list[str]:
         # get n different init configurations
-        inits = self.get_pddl_init()
+        inits = self.get_pddl_init(sample=sample)
 
         problems = []
         for init in inits:
@@ -438,7 +397,7 @@ class LLMDPAgent:
             if "openable" in self.scene_objects[receptacle]:
                 self.scene_objects[receptacle]["opened"] = True
 
-            # update belief
+            # update beliefs
             # all objects not observed at this receptacle cannot be believed to be in it
             for obj in self.scene_objects.keys():
                 if (
@@ -466,21 +425,37 @@ class LLMDPAgent:
         return scene_changed
 
     def get_plan(self) -> list[str]:
-        problems = self.get_pddl_problem()
+        # Plan Generator
+        # Using LLM to instantiate belief
+        if self.use_llm_search:
+            problems = self.get_pddl_problem(sample="llm")
+        # Using random sampling to instantiate belief
+        else:
+            problems = self.get_pddl_problem(sample="random")
+
         plans = parallel_lapkt_solver(problems, logger=self.logger)
-        # greedy selection strategy
+
+        # In some cases the LLM fails to generate valid states
+        # (e.g. if instantiates only goal satisfying states)
+        if len(plans) == 0:
+            self.logger.warning("No plans found: sampling randomly.")
+            problems = self.get_pddl_problem(sample="random")
+            plans = parallel_lapkt_solver(problems, logger=self.logger)
+
+        # Action Selector: greedy selection strategy
         return min(plans, key=len)
 
     def take_action(self, last_observation="") -> str:
         # sometimes move action doesn't trigger observation (e.g. if already close)
+        # this is a flaw with Alfworld, so we manually trigger an observation
         if (
             last_observation == "Nothing happens."
             and self.actions_taken[-1][0] == "gotoreceptacle"
         ):
             return f"examine {self.actions_taken[-1][1]}".replace("-", " ")
-        # if last action was not move, then we should have observed something
+        # if last action was not move, then we should probably have observed something
         elif last_observation == "Nothing happens.":
-            raise Exception(f"Action {self.actions_taken[-1][0]} failed.")
+            self.logger.warning(f"Invalid Action: {self.actions_taken[-1][0]} failed.")
 
         # update scene_objects with last observation
         changed = self.update_observation(last_observation)
@@ -509,7 +484,7 @@ if __name__ == "__main__":
     import alfworld.agents.environment
 
     os.makedirs(LLMDPConfig.output_dir, exist_ok=True)
-    run_name = f"{LLMDPConfig.output_dir}/{LLMDPConfig.name}_{LLMDPConfig.top_n}_{LLMDPConfig.llm_model}"
+    run_name = f"{LLMDPConfig.output_dir}/{LLMDPConfig.name}_{LLMDPConfig.top_n}"
 
     with open(f"{LLMDPConfig.alfworld_config_path}/base_config.yaml") as reader:
         config = yaml.safe_load(reader)
