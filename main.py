@@ -11,6 +11,12 @@ from llm_utils import llm_cache
 from llmdp import LLMDPAgent
 
 
+def process_ob(ob):
+    if ob.startswith("You arrive at loc "):
+        ob = ob[ob.find(". ") + 2 :]
+    return ob
+
+
 def llmdp_run(agent, logger: Logger) -> tuple[int, int]:
     """
     Using the LLM-DP agent to navigate the environment
@@ -23,7 +29,7 @@ def llmdp_run(agent, logger: Logger) -> tuple[int, int]:
             logger.error(f"Error in taking action {str(e)}")
             logger.info(str(agent.scene_objects))
             logger.info(str(agent.plan))
-            return 0, i
+            return 0, i, agent.llm_tokens_used
 
         logger.info(f"{i} Action: {action}")
         observation, reward, done, info = env.step([action])
@@ -76,7 +82,12 @@ def alfworld_react_run_chat(
 
     llm_tokens_used = 0
     for i in range(1, 50):
-        action, token_usage = llm_cache(chat_prompts)
+        try:
+            action, token_usage = llm_cache(chat_prompts)
+        except Exception as e:
+            logger.error(f"Error {str(e)}")
+            return 0, i, llm_tokens_used
+
         llm_tokens_used += token_usage["total_tokens"]
         observation, reward, done, info = env.step([action.replace(">", "").strip()])
         observation, reward, done = (
@@ -84,8 +95,10 @@ def alfworld_react_run_chat(
             info["won"][0],
             done[0],
         )
-        # check if the agent is apologizing (will get stuck in a loop)
+        # check if the agent is off-topic
+        # apologizing / or asking what's next will get it stuck in a loop
         if "I apologize" in action:
+            logger.info(f"{i} Action: {action}")
             return 0, i, llm_tokens_used
 
         if action.startswith("> think:"):
@@ -137,11 +150,6 @@ if __name__ == "__main__":
     )
     env = env.init_env(batch_size=1)
 
-    def process_ob(ob):
-        if ob.startswith("You arrive at loc "):
-            ob = ob[ob.find(". ") + 2 :]
-        return ob
-
     NUM_GAMEFILES = len(env.gamefiles)
 
     logger = get_logger(f"{run_name}.log")
@@ -183,29 +191,24 @@ if __name__ == "__main__":
 
         for i, (k, task_type) in enumerate(prefixes.items()):
             if name.startswith(k):
-                try:
-                    if LLMDPConfig.use_react_chat:
-                        r, length, llm_tokens_used = alfworld_react_run_chat(
-                            scene_observation, task_description, task_type, logger
-                        )
-                    else:
-                        agent = LLMDPAgent(
-                            scene_observation,
-                            task_description,
-                            logger=logger,
-                            use_llm_search=LLMDPConfig.use_llm_search,
-                            top_n=LLMDPConfig.top_n,
-                        )
-                        r, length, llm_tokens_used = llmdp_run(agent)
-                except Exception as e:
-                    logger.error(f"{str(e)}")
-                    r = 0
-                    length = 0
-                    llm_tokens_used = 0
+                # use ReAct baseline
+                if LLMDPConfig.use_react_chat:
+                    r, length, llm_tokens_used = alfworld_react_run_chat(
+                        scene_observation, task_description, task_type, logger
+                    )
+                # use LLM-DP
+                else:
+                    agent = LLMDPAgent(
+                        scene_observation,
+                        task_description,
+                        logger=logger,
+                        use_llm_search=LLMDPConfig.use_llm_search,
+                        top_n=LLMDPConfig.top_n,
+                    )
+                    r, length, llm_tokens_used = llmdp_run(agent)
 
                 rs[i] += r
                 cnts[i] += 1
-
                 results.append(
                     {
                         "task": task_type,
