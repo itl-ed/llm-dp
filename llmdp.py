@@ -1,14 +1,8 @@
-import json
-import os
 import random
 import re
 
 from collections import Counter, defaultdict
 
-import yaml
-
-from config import LLMDPConfig
-from logger import get_logger
 from planner import parallel_lapkt_solver
 from llm_utils import llm_cache
 
@@ -78,30 +72,28 @@ class LLMDPAgent:
         self,
         initial_scene_observation: str,
         task_description: str,
-        env_id=0,
         logger=None,
         use_llm_search=False,
         top_n=3,
     ) -> None:
         self.initial_scene_observation = initial_scene_observation
         self.task_description = task_description
-        self.env_id = env_id
-        self.llm_tokens_sent = 0
-        self.llm_chat_tokens_sent = 0
+        self.llm_tokens_used = 0
         self.logger = logger
         self.use_llm_search = use_llm_search
         self.top_n = top_n
 
         # get PDDL objects from scene_observation
-        self.scene_receptacles = self.find_receptacles_from_scene_observation(
+        scene_receptacles = self.find_receptacles_from_scene_observation(
             initial_scene_observation
         )
 
         # populate scene_objects with all objects/receptacles in scene
         self.scene_objects = defaultdict(dict)
-        for r in self.scene_receptacles:
+        for r in scene_receptacles:
             self.scene_objects[r] = self.get_receptacle_attributes(r)
 
+        # use LLM to translate task description to PDDL goal
         self.pddl_goal = self.get_pddl_goal()
         self.logger.info(f"PDDL GOAL: {self.pddl_goal}")
 
@@ -122,7 +114,7 @@ class LLMDPAgent:
                     # all receptacles are possible locations for an object
                     self.scene_objects[name]["beliefs"][
                         "inReceptacle"
-                    ] = self.scene_receptacles.copy()
+                    ] = scene_receptacles.copy()
 
                 if "lamp" in name:
                     self.scene_objects[name]["isLight"] = True
@@ -240,7 +232,7 @@ class LLMDPAgent:
             }
         ]
         pddl_goal, token_usage = llm_cache(prompt_messages, stop=None)
-        self.llm_tokens_sent += token_usage["total_tokens"]
+        self.llm_tokens_used += token_usage["total_tokens"]
         return pddl_goal
 
     def get_pddl_belief_predicate(
@@ -260,7 +252,7 @@ class LLMDPAgent:
             {"role": "user", "content": user_prompt},
         ]
         selected_values, token_usage = llm_cache(prompt_messages, stop=None)
-        self.llm_tokens_sent += token_usage["total_tokens"]
+        self.llm_tokens_used += token_usage["total_tokens"]
         # parse the selected values as list
         try:
             selected_values = re.findall(r"'(.*?)'", selected_values)
@@ -477,135 +469,3 @@ class LLMDPAgent:
         )
 
         return alfworld_action
-
-
-if __name__ == "__main__":
-    import alfworld
-    import alfworld.agents.environment
-
-    os.makedirs(LLMDPConfig.output_dir, exist_ok=True)
-    run_name = f"{LLMDPConfig.output_dir}/{LLMDPConfig.name}_{LLMDPConfig.top_n}"
-
-    with open(f"{LLMDPConfig.alfworld_config_path}/base_config.yaml") as reader:
-        config = yaml.safe_load(reader)
-
-    split = "eval_out_of_distribution"
-
-    # UPDATE PATH TO ALFWORLD DATA
-    for k in config:
-        for i, j in config[k].items():
-            if type(j) == str and j.startswith("$"):
-                config[k][i] = config[k][i].replace(
-                    "$ALFWORLD_DATA", LLMDPConfig.alfworld_data_path
-                )
-
-    env = getattr(alfworld.agents.environment, config["env"]["type"])(
-        config, train_eval=split
-    )
-    env = env.init_env(batch_size=1)
-
-    def process_ob(ob):
-        if ob.startswith("You arrive at loc "):
-            ob = ob[ob.find(". ") + 2 :]
-        return ob
-
-    NUM_GAMEFILES = len(env.gamefiles)
-
-    logger = get_logger(f"{run_name}.log")
-
-    def llmdp_run(agent) -> tuple[int, int]:
-        last_observation = ""
-        for i in range(1, 50):
-            try:
-                action = agent.take_action(last_observation=last_observation)
-            except Exception as e:
-                logger.error(f"Error in taking action {str(e)}")
-                logger.info(str(agent.scene_objects))
-                logger.info(str(agent.plan))
-                return 0, i
-
-            logger.info(f"{i} Action: {action}")
-            observation, reward, done, info = env.step([action])
-            observation, reward, done = (
-                process_ob(observation[0]),
-                info["won"][0],
-                done[0],
-            )
-            last_observation = observation
-            logger.info(f"{i} Obs: {last_observation}")
-            if done:
-                return reward, i
-        return 0, i
-
-    prefixes = {
-        "pick_and_place": "put",
-        "pick_clean_then_place": "clean",
-        "pick_heat_then_place": "heat",
-        "pick_cool_then_place": "cool",
-        "look_at_obj": "examine",
-        "pick_two_obj": "puttwo",
-    }
-    cnts = [0] * 6
-    rs = [0] * 6
-    results = []
-
-    # load previous results (if llm errors - useful for resuming)
-    prev_results = []
-    # with open(f"{run_name}.json", "rb") as f:
-    # prev_results = json.loads(f.read())
-
-    for n in range(NUM_GAMEFILES):
-        # Set seed for reproducibility
-        random.seed(LLMDPConfig.seed)
-
-        ob, info = env.reset()
-        ob = "\n".join(ob[0].split("\n\n")[1:])
-        scene_observation, task_description = ob.split("\n")
-        name = "/".join(info["extra.gamefile"][0].split("/")[-3:-1])
-
-        logger.info(name)
-        logger.info(scene_observation)
-        logger.info(task_description)
-
-        # only run if prev failed (or if not in prev)
-        if n < len(prev_results) and prev_results[n]["success"]:
-            results.append(prev_results[n])
-            continue
-
-        for i, (k, v) in enumerate(prefixes.items()):
-            if name.startswith(k):
-                try:
-                    agent = LLMDPAgent(
-                        scene_observation,
-                        task_description,
-                        logger=logger,
-                        use_llm_search=LLMDPConfig.use_llm_search,
-                        top_n=LLMDPConfig.top_n,
-                    )
-                    r, length = llmdp_run(agent)
-                except Exception as e:
-                    logger.error(f"{str(e)}")
-                    r = 0
-                    length = 0
-
-                rs[i] += r
-                cnts[i] += 1
-
-                results.append(
-                    {
-                        "task": v,
-                        "success": r,
-                        "length": length,
-                        "llm_tokens": agent.llm_tokens_sent,
-                        "llm_chat_tokens": agent.llm_chat_tokens_sent,
-                    }
-                )
-                logger.info(f"# Tokens used: {agent.llm_tokens_sent}")
-                out_log = f"# {n + 1} r: {r} rs: {rs} cnts: {cnts} sum(rs) / sum(cnts): {sum(rs) / sum(cnts)}"
-                logger.info(out_log)
-                break
-
-        logger.info("------------\n")
-        # save results
-        with open(f"{run_name}.json", "w") as f:
-            json.dump(results, f)
