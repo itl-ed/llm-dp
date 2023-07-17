@@ -32,6 +32,7 @@ def llm_cache(
     llm_messages: list[dict[str]],
     stop=None,
 ) -> tuple[str, dict[str, int]]:
+    # Cache the openai responses in pickle file
     cache_file = (
         f"{LLMDPConfig.output_dir}/llm_responses_{LLMDPConfig.llm_model}.pickle"
     )

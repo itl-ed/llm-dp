@@ -41,6 +41,7 @@ RUN curl -SL $LAPKT_URL | tar -xz \
     && cd external/libff \
     && make clean && make depend && make \
     && cd ../../ && mkdir compiled_planners && cd planners \
+    && cd ff-ffparser && scons && cp ff ../../compiled_planners/. && cd ..\
     && cd bfs_f-ffparser && scons && cp bfs_f ../../compiled_planners/.
 
 

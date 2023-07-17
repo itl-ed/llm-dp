@@ -1,5 +1,6 @@
 import random
 import re
+from typing import Literal
 
 from collections import Counter, defaultdict
 
@@ -73,14 +74,14 @@ class LLMDPAgent:
         initial_scene_observation: str,
         task_description: str,
         logger=None,
-        use_llm_search=False,
+        sample: Literal["llm", "random"] = "llm",
         top_n=3,
     ) -> None:
         self.initial_scene_observation = initial_scene_observation
         self.task_description = task_description
         self.llm_tokens_used = 0
         self.logger = logger
-        self.use_llm_search = use_llm_search
+        self.sample = sample
         self.top_n = top_n
 
         # get PDDL objects from scene_observation
@@ -124,7 +125,7 @@ class LLMDPAgent:
     @staticmethod
     def process_obs(observation: str) -> dict:
         """
-        No LLM version of process_obs prefered for $ efficiency.
+        No LLM version of process_obs prefered for efficiency.
         """
         json_dict = {}
         # check if the receptacle is closed
@@ -324,7 +325,7 @@ class LLMDPAgent:
             set([f"(:init {predicates})\n" for predicates in belief_predicates])
         )
 
-    def get_pddl_problem(self, sample="random") -> list[str]:
+    def get_pddl_problem(self, sample: Literal["llm", "random"] = "llm") -> list[str]:
         # get n different init configurations
         inits = self.get_pddl_init(sample=sample)
 
@@ -418,13 +419,7 @@ class LLMDPAgent:
 
     def get_plan(self) -> list[str]:
         # Plan Generator
-        # Using LLM to instantiate belief
-        if self.use_llm_search:
-            problems = self.get_pddl_problem(sample="llm")
-        # Using random sampling to instantiate belief
-        else:
-            problems = self.get_pddl_problem(sample="random")
-
+        problems = self.get_pddl_problem(sample=self.sample)
         plans = parallel_lapkt_solver(problems, logger=self.logger)
 
         # In some cases the LLM fails to generate valid states

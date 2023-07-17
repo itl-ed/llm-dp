@@ -2,6 +2,7 @@ import json
 import random
 import os
 from logging import Logger
+from typing import Literal
 
 import yaml
 
@@ -17,32 +18,44 @@ def process_ob(ob):
     return ob
 
 
-def llmdp_run(agent, logger: Logger) -> tuple[int, int]:
+def llmdp_run(
+    scene_observation: str,
+    task_description: str,
+    logger: Logger,
+    sample: Literal["llm", "random"] = "llm",
+    top_n=3,
+) -> tuple[int, int]:
     """
     Using the LLM-DP agent to navigate the environment
     """
-    last_observation = ""
-    for i in range(1, 50):
-        try:
-            action = agent.take_action(last_observation=last_observation)
-        except Exception as e:
-            logger.error(f"Error in taking action {str(e)}")
-            logger.info(str(agent.scene_objects))
-            logger.info(str(agent.plan))
-            return 0, i, agent.llm_tokens_used
-
-        logger.info(f"{i} Action: {action}")
-        observation, reward, done, info = env.step([action])
-        observation, reward, done = (
-            process_ob(observation[0]),
-            info["won"][0],
-            done[0],
+    i = 0
+    try:
+        agent = LLMDPAgent(
+            scene_observation,
+            task_description,
+            logger=logger,
+            sample=sample,
+            top_n=top_n,
         )
-        last_observation = observation
-        logger.info(f"{i} Obs: {last_observation}")
-        if done:
-            return reward, i, agent.llm_tokens_used
-    return 0, i, agent.llm_tokens_used
+        last_observation = ""
+        for i in range(1, 50):
+            action = agent.take_action(last_observation=last_observation)
+            logger.info(f"{i} Action: {action}")
+            observation, reward, done, info = env.step([action])
+            observation, reward, done = (
+                process_ob(observation[0]),
+                info["won"][0],
+                done[0],
+            )
+            last_observation = observation
+            logger.info(f"{i} Obs: {last_observation}")
+            if done:
+                return reward, i, agent.llm_tokens_used
+        return 0, i, agent.llm_tokens_used
+
+    except Exception as e:
+        logger.error(f"Error in taking action {str(e)}")
+        return 0, i, agent.llm_tokens_used
 
 
 def alfworld_react_run_chat(
@@ -96,8 +109,9 @@ def alfworld_react_run_chat(
             done[0],
         )
         # check if the agent is off-topic
-        # apologizing / or asking what's next will get it stuck in a loop
-        if "I apologize" in action:
+        # (apologizing) will get it stuck in a loop
+        # which in practice it never recovers from
+        if "I apologize" in action or "Have a great day!" in action:
             logger.info(f"{i} Action: {action}")
             return 0, i, llm_tokens_used
 
@@ -108,8 +122,9 @@ def alfworld_react_run_chat(
         # this is a quirk of Alfworld which ChatGPT does not handle well
         # since it just picks the most appropriate word (in or on)
         # depending on the context
+        # Performance really suffers if we don't do this
         if "put " in action and (" in " in action or " on " in action):
-            action = action.replace(" in ", " in/on ")
+            action = action.replace(" in ", " in/on ").replace(" on ", " in/on ")
 
         logger.info(f"{i} Action: {action}")
         logger.info(f"{i} Obs: {observation}")
@@ -168,8 +183,8 @@ if __name__ == "__main__":
 
     # load previous results (if llm errors - useful for resuming)
     prev_results = []
-    # with open(f"{run_name}.json", "rb") as f:
-    # prev_results = json.loads(f.read())
+    with open(f"{run_name}.json", "rb") as f:
+        prev_results = json.loads(f.read())
 
     for n in range(NUM_GAMEFILES):
         # Set seed for reproducibility
@@ -198,14 +213,13 @@ if __name__ == "__main__":
                     )
                 # use LLM-DP
                 else:
-                    agent = LLMDPAgent(
-                        scene_observation,
-                        task_description,
+                    r, length, llm_tokens_used = llmdp_run(
+                        scene_observation=scene_observation,
+                        task_description=task_description,
                         logger=logger,
-                        use_llm_search=LLMDPConfig.use_llm_search,
+                        sample=LLMDPConfig.sample,
                         top_n=LLMDPConfig.top_n,
                     )
-                    r, length, llm_tokens_used = llmdp_run(agent)
 
                 rs[i] += r
                 cnts[i] += 1
