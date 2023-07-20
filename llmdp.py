@@ -76,6 +76,7 @@ class LLMDPAgent:
         logger=None,
         sample: Literal["llm", "random"] = "llm",
         top_n=3,
+        random_fallback=False,
     ) -> None:
         self.initial_scene_observation = initial_scene_observation
         self.task_description = task_description
@@ -83,6 +84,7 @@ class LLMDPAgent:
         self.logger = logger
         self.sample = sample
         self.top_n = top_n
+        self.random_fallback = random_fallback
 
         # get PDDL objects from scene_observation
         scene_receptacles = self.find_receptacles_from_scene_observation(
@@ -424,7 +426,7 @@ class LLMDPAgent:
 
         # In some cases the LLM fails to generate valid states
         # (e.g. if instantiates only goal satisfying states)
-        if len(plans) == 0:
+        if self.random_fallback and len(plans) == 0:
             self.logger.warning("No plans found: sampling randomly.")
             problems = self.get_pddl_problem(sample="random")
             plans = parallel_lapkt_solver(problems, logger=self.logger)

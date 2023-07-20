@@ -43,6 +43,7 @@ def llm_cache(
 
     key = json.dumps(llm_messages)
     if key not in llm_responses:
+        print("Not in cache")
         generated_content, token_usage = llm(llm_messages, stop=stop)
         llm_responses[key] = (generated_content, token_usage)
         with open(cache_file, "wb") as f:

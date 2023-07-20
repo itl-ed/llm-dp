@@ -15,12 +15,13 @@ class LLMDPBaseConfig(BaseSettings):
     platform: Literal["linux/amd64", "linux/arm64"] = "linux/arm64"
     output_dir: str = "output"
     seed: int = 42
-    name: str = "chat_search2"
+    name: str = "llmdp-nofallback"
     llm_model: str = "gpt-3.5-turbo-0613"
     sample: Literal[
         "llm", "random"
     ] = "llm"  # whether to use LLM to instantiate beliefs
     use_react_chat: bool = False  # activate ReAct baseline
+    random_fallback: bool = False  # activate random fallback
 
     class Config:
         env_file = ".env"

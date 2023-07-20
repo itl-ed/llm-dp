@@ -24,6 +24,7 @@ def llmdp_run(
     logger: Logger,
     sample: Literal["llm", "random"] = "llm",
     top_n=3,
+    random_fallback=False,
 ) -> tuple[int, int]:
     """
     Using the LLM-DP agent to navigate the environment
@@ -36,6 +37,7 @@ def llmdp_run(
             logger=logger,
             sample=sample,
             top_n=top_n,
+            random_fallback=random_fallback,
         )
         last_observation = ""
         for i in range(1, 50):
@@ -71,6 +73,8 @@ def alfworld_react_run_chat(
     with open(folder + prompt_file, "r") as f:
         d = json.load(f)
 
+    # chat system prompt for ReAct baseline
+    # NOTE this is slightly different from the original ReAct baseline
     system_prompt = [
         {
             "role": "system",
@@ -94,6 +98,7 @@ def alfworld_react_run_chat(
     )
 
     llm_tokens_used = 0
+    think_count = 0
     for i in range(1, 50):
         try:
             action, token_usage = llm_cache(chat_prompts)
@@ -113,16 +118,17 @@ def alfworld_react_run_chat(
         # which in practice it never recovers from
         if "I apologize" in action or "Have a great day!" in action:
             logger.info(f"{i} Action: {action}")
-            return 0, i, llm_tokens_used
+            return 0, i - think_count, llm_tokens_used
 
         if action.startswith("> think:"):
             observation = "OK."
+            think_count += 1
 
-        # change 'in' or 'on' to 'in/on'
+        # NOTE: we change 'in' or 'on' to 'in/on'
         # this is a quirk of Alfworld which ChatGPT does not handle well
         # since it just picks the most appropriate word (in or on)
         # depending on the context
-        # Performance really suffers if we don't do this
+        # Performance really suffers without this post processing
         if "put " in action and (" in " in action or " on " in action):
             action = action.replace(" in ", " in/on ").replace(" on ", " in/on ")
 
@@ -131,9 +137,9 @@ def alfworld_react_run_chat(
         chat_prompts.append({"role": "assistant", "content": action})
         chat_prompts.append({"role": "user", "content": observation})
         if done:
-            return reward, i, llm_tokens_used
+            return reward, i - think_count, llm_tokens_used
 
-    return 0, i, llm_tokens_used
+    return 0, i - think_count, llm_tokens_used
 
 
 if __name__ == "__main__":
@@ -183,8 +189,9 @@ if __name__ == "__main__":
 
     # load previous results (if llm errors - useful for resuming)
     prev_results = []
-    with open(f"{run_name}.json", "rb") as f:
-        prev_results = json.loads(f.read())
+    if os.path.exists(f"{run_name}.json"):
+        with open(f"{run_name}.json", "rb") as f:
+            prev_results = json.loads(f.read())
 
     for n in range(NUM_GAMEFILES):
         # Set seed for reproducibility
@@ -219,6 +226,7 @@ if __name__ == "__main__":
                         logger=logger,
                         sample=LLMDPConfig.sample,
                         top_n=LLMDPConfig.top_n,
+                        random_fallback=LLMDPConfig.random_fallback,
                     )
 
                 rs[i] += r
@@ -237,6 +245,11 @@ if __name__ == "__main__":
                 break
 
         logger.info("------------\n")
+
         # save results
         with open(f"{run_name}.json", "w") as f:
             json.dump(results, f)
+
+    with open(f"{run_name}.json", "w") as f:
+        json.dump(results, f)
+    assert len(results) == NUM_GAMEFILES, f"{len(results)} != {NUM_GAMEFILES}"
