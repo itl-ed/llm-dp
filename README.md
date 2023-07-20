@@ -4,7 +4,9 @@
 
 1. Install ``alfworld`` following instructions [here](https://github.com/alfworld/alfworld).
 2. Install requirements: ``pip install -r requirements.txt``.
-3. Install docker for running LAPKT planner.
+3. Install docker for running LAPKT planner. There are two different docker images available:
+   - The docker image for the linux/arm64 platform is available [here](<https://hub.docker.com/repository/docker/gautierdag/lapkt-arm/general>). See the `Dockerfile` for more details.
+   - The docker image for the linux/amd64 platform is available [here](<https://hub.docker.com/r/lapkt/lapkt-public>)
 
 ## Config
 
@@ -36,6 +38,6 @@ See `config.py` for more details.
 
 Run the following command to run the LLM-DP (or ReAct) agent:
 
-```
+```bash
 python main.py
 ```
