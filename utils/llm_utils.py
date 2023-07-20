@@ -5,7 +5,7 @@ import time
 
 import openai
 from openai.error import RateLimitError
-from config import LLMDPConfig
+from utils.config import LLMDPConfig
 
 
 openai.api_key = LLMDPConfig.openai_api_key

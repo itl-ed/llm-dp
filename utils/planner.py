@@ -5,7 +5,7 @@ from functools import partial
 import logging
 from tempfile import NamedTemporaryFile
 
-from config import LLMDPConfig
+from utils.config import LLMDPConfig
 
 
 def call_lapkt_solver(

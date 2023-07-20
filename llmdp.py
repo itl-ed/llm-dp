@@ -4,8 +4,8 @@ from typing import Literal
 
 from collections import Counter, defaultdict
 
-from planner import parallel_lapkt_solver
-from llm_utils import llm_cache
+from utils.planner import parallel_lapkt_solver
+from utils.llm_utils import llm_cache
 
 GENERATE_GOAL_PROMPT = [
     {
