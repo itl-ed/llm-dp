@@ -77,6 +77,7 @@ class LLMDPAgent:
         sample: Literal["llm", "random"] = "llm",
         top_n=3,
         random_fallback=False,
+        temperature=0.0,
     ) -> None:
         self.initial_scene_observation = initial_scene_observation
         self.task_description = task_description
@@ -85,6 +86,7 @@ class LLMDPAgent:
         self.sample = sample
         self.top_n = top_n
         self.random_fallback = random_fallback
+        self.temperature = temperature
 
         # get PDDL objects from scene_observation
         scene_receptacles = self.find_receptacles_from_scene_observation(
@@ -115,9 +117,9 @@ class LLMDPAgent:
                 # if not a receptacle, then it's location is unknown
                 if "isReceptacle" not in self.scene_objects[name]:
                     # all receptacles are possible locations for an object
-                    self.scene_objects[name]["beliefs"][
-                        "inReceptacle"
-                    ] = scene_receptacles.copy()
+                    self.scene_objects[name]["beliefs"]["inReceptacle"] = (
+                        scene_receptacles.copy()
+                    )
 
                 if "lamp" in name:
                     self.scene_objects[name]["isLight"] = True
@@ -234,7 +236,9 @@ class LLMDPAgent:
                 "content": self.task_description,
             }
         ]
-        pddl_goal, token_usage = llm_cache(prompt_messages, stop=None)
+        pddl_goal, token_usage = llm_cache(
+            prompt_messages, stop=None, temperature=self.temperature
+        )
         self.llm_tokens_used += token_usage["total_tokens"]
         return pddl_goal
 
@@ -254,7 +258,9 @@ class LLMDPAgent:
             {"role": "system", "content": f"Observed Environment\n{init_str}"},
             {"role": "user", "content": user_prompt},
         ]
-        selected_values, token_usage = llm_cache(prompt_messages, stop=None)
+        selected_values, token_usage = llm_cache(
+            prompt_messages, stop=None, temperature=self.temperature
+        )
         self.llm_tokens_used += token_usage["total_tokens"]
         # parse the selected values as list
         try:

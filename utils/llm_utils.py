@@ -3,17 +3,17 @@ import os
 import pickle
 import time
 
-import openai
-from openai.error import RateLimitError
+from openai import OpenAI
+from openai._exceptions import RateLimitError
 from utils.config import LLMDPConfig
 
 
-openai.api_key = LLMDPConfig.openai_api_key
+client = OpenAI(api_key=LLMDPConfig.openai_api_key)
 
 
 def llm(llm_messages: list[str], stop=None) -> tuple[str, dict[str, int]]:
     try:
-        completion = openai.ChatCompletion.create(
+        completion = client.chat.completions.create(
             model=LLMDPConfig.llm_model,
             messages=llm_messages,
             temperature=0.0,
@@ -22,7 +22,7 @@ def llm(llm_messages: list[str], stop=None) -> tuple[str, dict[str, int]]:
             presence_penalty=0.0,
             stop=stop,
         )
-        return completion.choices[0].message["content"], dict(completion["usage"])
+        return completion.choices[0].message.content, dict(completion.usage)
     except RateLimitError:
         time.sleep(10)
         return llm(llm_messages, stop=stop)
@@ -31,7 +31,12 @@ def llm(llm_messages: list[str], stop=None) -> tuple[str, dict[str, int]]:
 def llm_cache(
     llm_messages: list[dict[str]],
     stop=None,
+    temperature=0,
 ) -> tuple[str, dict[str, int]]:
+    # If temperature is greater than 0, then skip cache
+    if temperature > 0:
+        return llm(llm_messages, stop=stop)
+
     # Cache the openai responses in pickle file
     cache_file = (
         f"{LLMDPConfig.output_dir}/llm_responses_{LLMDPConfig.llm_model}.pickle"

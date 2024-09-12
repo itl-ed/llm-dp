@@ -1,4 +1,5 @@
 import json
+import argparse
 import random
 import os
 from logging import Logger
@@ -10,6 +11,32 @@ from utils.config import LLMDPConfig
 from utils.logger import get_logger
 from utils.llm_utils import llm_cache
 from llmdp import LLMDPAgent
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Run LLM-DP with configurable arguments."
+    )
+    parser.add_argument(
+        "--use_react_chat",
+        action="store_true",
+        help="Use ReAct Chat baseline.",
+    )
+    parser.add_argument(
+        "--sample", type=str, default=None, help="Sampling method (e.g., 'random')."
+    )
+    parser.add_argument(
+        "--random_fallback",
+        action="store_true",
+        help="Whether to use random fallback.",
+    )
+    parser.add_argument("--top_n", type=int, default=None, help="Top N predictions.")
+    parser.add_argument("--seed", type=int, default=None, help="Random seed.")
+    parser.add_argument(
+        "--temperature", type=float, default=None, help="Temperature for LLM sampling."
+    )
+
+    return parser.parse_args()
 
 
 def process_ob(ob):
@@ -25,6 +52,7 @@ def llmdp_run(
     sample: Literal["llm", "random"] = "llm",
     top_n=3,
     random_fallback=False,
+    temperature=0,
 ) -> tuple[int, int]:
     """
     Using the LLM-DP agent to navigate the environment
@@ -38,6 +66,7 @@ def llmdp_run(
             sample=sample,
             top_n=top_n,
             random_fallback=random_fallback,
+            temperature=temperature,
         )
         last_observation = ""
         for i in range(1, 50):
@@ -61,7 +90,11 @@ def llmdp_run(
 
 
 def alfworld_react_run_chat(
-    scene_observation: str, task_description: str, task_type: str, logger: Logger
+    scene_observation: str,
+    task_description: str,
+    task_type: str,
+    logger: Logger,
+    temperature=0,
 ) -> tuple[int, int, int]:
     """
     React gpt-3.5-turbo (chatGPT) version of the alfworld_react_run function
@@ -101,7 +134,7 @@ def alfworld_react_run_chat(
     think_count = 0
     for i in range(1, 50):
         try:
-            action, token_usage = llm_cache(chat_prompts)
+            action, token_usage = llm_cache(chat_prompts, temperature=temperature)
         except Exception as e:
             logger.error(f"Error {str(e)}")
             return 0, i, llm_tokens_used
@@ -143,15 +176,45 @@ def alfworld_react_run_chat(
 
 
 if __name__ == "__main__":
+    args = parse_args()
+    # parsing arguments
+    if args.use_react_chat:
+        print("Using ReAct Chat baseline")
+        LLMDPConfig.use_react_chat = args.use_react_chat
+    if args.sample is not None:
+        print("Settiargs.ng sample to", args.sample)
+        LLMDPConfig.sample = args.sample
+    if args.random_fallback:
+        print("Setting random_fallback to", args.random_fallback)
+        LLMDPConfig.random_fallback = args.random_fallback
+    if args.top_n is not None:
+        print("Setting top_n to", args.top_n)
+        LLMDPConfig.top_n = args.top_n
+    if args.seed is not None:
+        print("Setting seed to", args.seed)
+        LLMDPConfig.seed = args.seed
+    if args.temperature is not None:
+        print("Setting temperature to", args.temperature)
+        LLMDPConfig.temperature = args.temperature
+
     import alfworld
     import alfworld.agents.environment
 
     os.makedirs(LLMDPConfig.output_dir, exist_ok=True)
 
     if LLMDPConfig.use_react_chat:
+        print("Using ReAct Chat baseline")
         run_name = f"{LLMDPConfig.output_dir}/react_chat"
     else:
-        run_name = f"{LLMDPConfig.output_dir}/{LLMDPConfig.name}_{LLMDPConfig.top_n}"
+        print("Using LLM-DP")
+        name = "llmdp"
+        if LLMDPConfig.sample == "random":
+            name += "-random"
+        elif not LLMDPConfig.random_fallback:
+            name += "-nofallback"
+        run_name = f"{LLMDPConfig.output_dir}/{name}_{LLMDPConfig.top_n}"
+
+    run_name += f"_{LLMDPConfig.seed}"
 
     with open(f"{LLMDPConfig.alfworld_config_path}/base_config.yaml") as reader:
         config = yaml.safe_load(reader)
@@ -216,7 +279,11 @@ if __name__ == "__main__":
                 # use ReAct baseline
                 if LLMDPConfig.use_react_chat:
                     r, length, llm_tokens_used = alfworld_react_run_chat(
-                        scene_observation, task_description, task_type, logger
+                        scene_observation,
+                        task_description,
+                        task_type,
+                        logger,
+                        LLMDPConfig.temperature,
                     )
                 # use LLM-DP
                 else:
@@ -227,6 +294,7 @@ if __name__ == "__main__":
                         sample=LLMDPConfig.sample,
                         top_n=LLMDPConfig.top_n,
                         random_fallback=LLMDPConfig.random_fallback,
+                        temperature=LLMDPConfig.temperature,
                     )
 
                 rs[i] += r
