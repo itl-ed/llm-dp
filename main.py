@@ -26,9 +26,9 @@ def parse_args():
         "--sample", type=str, default=None, help="Sampling method (e.g., 'random')."
     )
     parser.add_argument(
-        "--random_fallback",
+        "--no_random_fallback",
         action="store_true",
-        help="Whether to use random fallback.",
+        help="Whether to abstain from random fallback.",
     )
     parser.add_argument("--top_n", type=int, default=None, help="Top N predictions.")
     parser.add_argument("--seed", type=int, default=None, help="Random seed.")
@@ -184,9 +184,9 @@ if __name__ == "__main__":
     if args.sample is not None:
         print("Settiargs.ng sample to", args.sample)
         LLMDPConfig.sample = args.sample
-    if args.random_fallback:
-        print("Setting random_fallback to", args.random_fallback)
-        LLMDPConfig.random_fallback = args.random_fallback
+    if args.no_random_fallback:
+        print("Disabling random fallback")
+        LLMDPConfig.random_fallback = False
     if args.top_n is not None:
         print("Setting top_n to", args.top_n)
         LLMDPConfig.top_n = args.top_n
@@ -224,7 +224,7 @@ if __name__ == "__main__":
     # UPDATE PATH TO ALFWORLD DATA
     for k in config:
         for i, j in config[k].items():
-            if type(j) == str and j.startswith("$"):
+            if isinstance(j, str) and j.startswith("$"):
                 config[k][i] = config[k][i].replace(
                     "$ALFWORLD_DATA", LLMDPConfig.alfworld_data_path
                 )
@@ -269,8 +269,8 @@ if __name__ == "__main__":
         logger.info(scene_observation)
         logger.info(task_description)
 
-        # only run if prev failed (or if not in prev)
-        if n < len(prev_results) and prev_results[n]["success"]:
+        # if not in prev
+        if n < len(prev_results):
             results.append(prev_results[n])
             continue
 
