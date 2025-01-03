@@ -246,7 +246,30 @@ class LLMDPAgent:
         self, init_str: str, belief_predicate: str, belief_values: list[str], top_n: 1
     ) -> list[str]:
         """
-        Given a task description return the PDDL goal using an LLM.
+        Uses the LLM to predict the most likely values for an unknown predicate in the environment.
+
+        Given a belief predicate (e.g., 'inReceptacle plate ?') and a list of possible values (e.g., ['fridge', 'countertop']),
+        this function queries the LLM to select the top N most likely values for the unknown variable (?).
+    
+        The LLM leverages its semantic knowledge of the world to infer plausible values based on the observed environment
+        and the context provided by the initial state (init_str).
+    
+        Args:
+            init_str (str): A string representation of the current observed environment state.
+            belief_predicate (str): The predicate to predict (e.g., 'inReceptacle plate ?').
+            belief_values (list[str]): A list of possible values for the unknown variable (?).
+            top_n (int): The number of most likely values to return.
+    
+        Returns:
+            list[str]: A list of the top N most likely values for the unknown variable (?).
+    
+        Example:
+            >>> init_str = "The fridge is closed. The countertop is empty."
+            >>> belief_predicate = "inReceptacle plate ?"
+            >>> belief_values = ["fridge", "countertop", "microwave"]
+            >>> top_n = 2
+            >>> get_pddl_belief_predicate(init_str, belief_predicate, belief_values, top_n)
+            ['fridge', 'countertop']
         """
         user_prompt = (
             f"Predict: {belief_predicate}\n"
